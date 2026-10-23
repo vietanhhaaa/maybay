@@ -1,0 +1,3729 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AERO-G: Mô Phỏng Bay 3D & Điều Khiển Trọng Lực</title>
+    <style>
+        :root {
+            --hud-green: #00ffaa;
+            --hud-cyan: #38bdf8;
+            --hud-amber: #fbbf24;
+            --hud-red: #fb7185;
+            --panel-bg: rgba(8, 15, 28, 0.78);
+            --panel-border: rgba(56, 189, 248, 0.35);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #030712;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #e2e8f0;
+        }
+
+        #canvas-container {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+        }
+
+        /* Hiệu ứng hậu kỳ màn hình: Vignette, Bloom Glow, G-Force / Gravity Tint */
+        #post-fx-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2;
+            pointer-events: none;
+            background: radial-gradient(circle at center, transparent 58%, rgba(0, 4, 12, 0.62) 100%);
+            transition: box-shadow 0.3s ease, background 0.3s ease;
+        }
+
+        #gravity-wave-fx {
+            position: fixed;
+            inset: 0;
+            z-index: 3;
+            pointer-events: none;
+            opacity: 0;
+            background: radial-gradient(circle at center, rgba(168, 85, 247, 0.28) 0%, transparent 70%);
+            transition: opacity 0.45s ease;
+        }
+
+        #lens-flare-canvas {
+            position: fixed;
+            inset: 0;
+            z-index: 4;
+            pointer-events: none;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Giao diện HUD chính */
+        #hud {
+            position: fixed;
+            inset: 0;
+            z-index: 10;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 14px 18px;
+        }
+
+        .hud-interactive {
+            pointer-events: auto;
+        }
+
+        /* Thanh trên cùng: La bàn + Thông số nhanh + Nút điều khiển */
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .hud-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            backdrop-filter: blur(8px);
+            border-radius: 10px;
+            padding: 10px 14px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        }
+
+        .top-left-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 225px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            letter-spacing: 0.4px;
+        }
+
+        .stat-label {
+            color: #94a3b8;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .stat-val {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-weight: 700;
+            font-size: 14px;
+            color: var(--hud-green);
+        }
+
+        /* La bàn trên đỉnh */
+        .compass-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        #compass-canvas {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+
+        .top-right-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 8px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .hud-btn {
+            background: rgba(15, 23, 42, 0.85);
+            color: #e2e8f0;
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 6px;
+            padding: 6px 11px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .hud-btn:hover {
+            background: rgba(56, 189, 248, 0.25);
+            border-color: var(--hud-cyan);
+            transform: translateY(-1px);
+        }
+
+        .hud-btn.active {
+            background: rgba(0, 255, 170, 0.22);
+            border-color: var(--hud-green);
+            color: var(--hud-green);
+        }
+
+        /* Trung tâm màn hình: Đường chân trời nhân tạo (Artificial Horizon) */
+        .hud-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #horizon-canvas {
+            width: 380px;
+            height: 320px;
+        }
+
+        /* Cảnh báo trung tâm (STALL, CRASH, PULL UP, TOUCHDOWN) */
+        #hud-alert {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 22px;
+            border-radius: 8px;
+            font-weight: 800;
+            font-size: 18px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+            text-align: center;
+            z-index: 15;
+        }
+
+        #hud-alert.danger {
+            background: rgba(225, 29, 72, 0.88);
+            border: 2px solid #fda4af;
+            color: #fff;
+            box-shadow: 0 0 25px rgba(225, 29, 72, 0.8);
+            animation: pulseAlert 0.45s infinite alternate;
+        }
+
+        #hud-alert.info {
+            background: rgba(14, 116, 144, 0.88);
+            border: 2px solid #67e8f9;
+            color: #ecfeff;
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.6);
+        }
+
+        @keyframes pulseAlert {
+            from { transform: translateX(-50%) scale(0.97); }
+            to { transform: translateX(-50%) scale(1.04); }
+        }
+
+        /* Phần dưới HUD: Đồng hồ bay, Trọng lực, Mini-map */
+        .hud-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 14px;
+        }
+
+        /* Cụm đồng hồ bên trái: Ga, Nhiên liệu, Trạng thái cơ giới */
+        .flight-gauges {
+            display: flex;
+            gap: 14px;
+            align-items: flex-end;
+        }
+
+        .vertical-bar-group {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .v-bar-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .v-bar-track {
+            width: 18px;
+            height: 110px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            border-radius: 5px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            position: relative;
+        }
+
+        .v-bar-fill {
+            width: 100%;
+            transition: height 0.08s linear;
+        }
+
+        #throttle-fill {
+            background: linear-gradient(to top, #10b981, #38bdf8, #f97316);
+            height: 0%;
+        }
+
+        #fuel-fill {
+            background: linear-gradient(to top, #f43f5e, #fbbf24, #22c55e);
+            height: 100%;
+        }
+
+        .v-bar-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: #94a3b8;
+        }
+
+        .v-bar-val {
+            font-size: 11px;
+            font-family: 'Consolas', monospace;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+
+        .systems-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+            min-width: 190px;
+        }
+
+        .sys-pill {
+            padding: 5px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sys-pill span.on { color: var(--hud-green); }
+        .sys-pill span.warn { color: var(--hud-amber); }
+        .sys-pill span.off { color: #64748b; }
+
+        /* Bảng điều khiển Trọng lực ở giữa dưới */
+        .gravity-panel {
+            min-width: 340px;
+            max-width: 430px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            border-color: rgba(168, 85, 247, 0.5);
+            box-shadow: 0 8px 28px rgba(88, 28, 135, 0.35);
+        }
+
+        .gravity-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .gravity-title {
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #d8b4fe;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .gravity-readout {
+            font-family: 'Consolas', monospace;
+            font-size: 15px;
+            font-weight: 800;
+            color: #f0abfc;
+            background: rgba(88, 28, 135, 0.45);
+            padding: 2px 8px;
+            border-radius: 5px;
+            border: 1px solid rgba(192, 132, 252, 0.4);
+        }
+
+        .gravity-slider-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #gravity-slider {
+            flex: 1;
+            accent-color: #c084fc;
+            cursor: pointer;
+            height: 6px;
+        }
+
+        .gravity-presets {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 5px;
+        }
+
+        .grav-btn {
+            background: rgba(30, 17, 54, 0.85);
+            border: 1px solid rgba(168, 85, 247, 0.35);
+            color: #e9d5ff;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 6px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-align: center;
+        }
+
+        .grav-btn:hover {
+            background: rgba(147, 51, 234, 0.4);
+            border-color: #d8b4fe;
+        }
+
+        .grav-btn.active {
+            background: rgba(168, 85, 247, 0.55);
+            border-color: #f0abfc;
+            color: #ffffff;
+            box-shadow: 0 0 12px rgba(168, 85, 247, 0.6);
+        }
+
+        /* Mini-map góc dưới phải */
+        .minimap-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            padding: 8px;
+        }
+
+        #minimap-canvas {
+            border-radius: 8px;
+            border: 1px solid rgba(56, 189, 248, 0.45);
+            background: #06121e;
+        }
+
+        .minimap-legend {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            font-size: 10px;
+            color: #94a3b8;
+        }
+
+        /* Màn hình Bắt đầu / Tạm dừng Modal */
+        #modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            background: radial-gradient(circle at center, rgba(10, 18, 36, 0.84) 0%, rgba(2, 6, 16, 0.95) 100%);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-box {
+            max-width: 820px;
+            width: 100%;
+            max-height: 92vh;
+            overflow-y: auto;
+            background: rgba(11, 20, 38, 0.94);
+            border: 1px solid rgba(56, 189, 248, 0.45);
+            border-radius: 16px;
+            padding: 26px 30px;
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75), 0 0 40px rgba(14, 165, 233, 0.2);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+            padding-bottom: 14px;
+            margin-bottom: 18px;
+        }
+
+        .game-title {
+            font-size: 26px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            background: linear-gradient(90deg, #38bdf8, #00ffaa, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .game-subtitle {
+            font-size: 13px;
+            color: #94a3b8;
+            margin-top: 3px;
+        }
+
+        .modal-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 18px;
+            margin-bottom: 20px;
+        }
+
+        .info-section {
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 10px;
+            padding: 14px;
+        }
+
+        .info-section h3 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.7px;
+            color: var(--hud-cyan);
+            margin-bottom: 10px;
+        }
+
+        .key-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 7px 12px;
+            font-size: 12px;
+        }
+
+        .key-item {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        kbd {
+            background: #1e293b;
+            border: 1px solid #475569;
+            border-bottom-width: 2px;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: #38bdf8;
+            white-space: nowrap;
+        }
+
+        .settings-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            border-top: 1px solid rgba(148, 163, 184, 0.2);
+            padding-top: 16px;
+        }
+
+        .start-btn {
+            background: linear-gradient(135deg, #0284c7, #10b981);
+            color: #fff;
+            border: none;
+            padding: 12px 32px;
+            font-size: 16px;
+            font-weight: 800;
+            border-radius: 10px;
+            cursor: pointer;
+            letter-spacing: 0.8px;
+            box-shadow: 0 8px 25px rgba(16, 185, 129, 0.4);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .start-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(16, 185, 129, 0.6);
+        }
+
+        /* Điều khiển cảm ứng cho điện thoại / máy tính bảng */
+        #touch-controls {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            pointer-events: none;
+            display: none;
+        }
+
+        #touch-controls.enabled {
+            display: block;
+        }
+
+        .joystick-zone {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.55);
+            border: 2px solid rgba(56, 189, 248, 0.5);
+            pointer-events: auto;
+            touch-action: none;
+        }
+
+        .joystick-knob {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 52px;
+            height: 52px;
+            margin-left: -26px;
+            margin-top: -26px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #38bdf8, #0284c7);
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.8);
+        }
+
+        .touch-right-pad {
+            position: absolute;
+            bottom: 30px;
+            right: 220px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: auto;
+        }
+
+        @media (max-width: 900px) {
+            .modal-grid { grid-template-columns: 1fr; }
+            .gravity-panel { min-width: 260px; }
+            #horizon-canvas { width: 280px; height: 240px; }
+            #touch-controls { display: block; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Container chứa cảnh 3D Three.js -->
+    <div id="canvas-container"></div>
+
+    <!-- Lớp phủ hậu kỳ: Vignette, G-Force / Gravity Tint & Lens Flare Mặt Trời -->
+    <div id="post-fx-overlay"></div>
+    <div id="gravity-wave-fx"></div>
+    <canvas id="lens-flare-canvas"></canvas>
+
+    <!-- Cảnh báo trung tâm (STALL, HẠ CÁNH, VA CHẠM) -->
+    <div id="hud-alert">STALL - THẤT TỐC!</div>
+
+    <!-- Giao diện HUD -->
+    <div id="hud">
+        <!-- Hàng trên cùng -->
+        <div class="hud-top">
+            <!-- Thông số bay chi tiết góc trái trên -->
+            <div class="hud-card top-left-stats">
+                <div class="stat-row">
+                    <span class="stat-label">Tốc độ (IAS)</span>
+                    <span class="stat-val" id="hud-speed">0 KT (0 km/h)</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Độ cao (ALT)</span>
+                    <span class="stat-val" id="hud-alt">0 m (0 ft)</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Tốc độ đứng (V/S)</span>
+                    <span class="stat-val" id="hud-vs">0.0 m/s</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Góc tấn (AoA)</span>
+                    <span class="stat-val" id="hud-aoa">0.0°</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Chỉ số G-Force</span>
+                    <span class="stat-val" id="hud-gforce">1.0 G</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Đèn dẫn PAPI</span>
+                    <span class="stat-val" id="hud-papi">⚪⚪🔴🔴 CHUẨN</span>
+                </div>
+            </div>
+
+            <!-- La bàn chính giữa trên -->
+            <div class="compass-wrapper">
+                <canvas id="compass-canvas" width="320" height="44"></canvas>
+                <div style="font-size: 11px; color: #94a3b8; background: rgba(8,15,28,0.75); padding: 2px 10px; border-radius: 10px; border: 1px solid rgba(56,189,248,0.25);">
+                    <span id="hud-cam-mode">🎥 Camera: Sau lưng</span> &nbsp;|&nbsp;
+                    <span id="hud-time-label">☀️ Ban ngày (14:00)</span> &nbsp;|&nbsp;
+                    <span id="hud-fps">60 FPS</span>
+                </div>
+            </div>
+
+            <!-- Cụm nút nhanh góc phải trên -->
+            <div class="hud-card top-right-controls hud-interactive">
+                <div class="btn-group">
+                    <button class="hud-btn" id="btn-time" title="Phím N: Đổi Ngày / Hoàng hôn / Đêm">🌗 Ngày/Đêm (N)</button>
+                    <button class="hud-btn" id="btn-camera" title="Phím C: Đổi góc nhìn">🎥 Camera (C)</button>
+                    <button class="hud-btn" id="btn-mouse-steer" title="Phím M: Bật/tắt lái bằng chuột">🖱️ Lái chuột (M)</button>
+                </div>
+                <div class="btn-group">
+                    <button class="hud-btn" id="btn-quality" title="Đổi chất lượng đồ họa">✨ Đồ họa: Cao</button>
+                    <button class="hud-btn" id="btn-audio" title="Bật/tắt âm thanh động cơ">🔊 Âm thanh: Bật</button>
+                    <button class="hud-btn" id="btn-respawn" title="Phím R: Đưa máy bay về đầu đường băng">🛫 Sân bay (R)</button>
+                    <button class="hud-btn" id="btn-pause" title="Phím P: Tạm dừng & Hướng dẫn">⏸️ Menu (P)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Đường chân trời nhân tạo (Artificial Horizon) chính giữa -->
+        <div class="hud-center">
+            <canvas id="horizon-canvas" width="380" height="320"></canvas>
+        </div>
+
+        <!-- Hàng dưới cùng -->
+        <div class="hud-bottom">
+            <!-- Thanh Ga, Nhiên liệu & Trạng thái hệ thống -->
+            <div class="hud-card flight-gauges">
+                <div class="vertical-bar-group">
+                    <div class="v-bar-item">
+                        <span class="v-bar-val" id="hud-thr-val">0%</span>
+                        <div class="v-bar-track">
+                            <div class="v-bar-fill" id="throttle-fill"></div>
+                        </div>
+                        <span class="v-bar-label">GA (THR)</span>
+                    </div>
+                    <div class="v-bar-item">
+                        <span class="v-bar-val" id="hud-fuel-val">100%</span>
+                        <div class="v-bar-track">
+                            <div class="v-bar-fill" id="fuel-fill"></div>
+                        </div>
+                        <span class="v-bar-label">NHIÊN LIỆU</span>
+                    </div>
+                </div>
+
+                <div class="systems-grid">
+                    <div class="sys-pill">
+                        <span>BÁNH ĐÁP (G)</span>
+                        <span id="sys-gear" class="on">HẠ (DOWN)</span>
+                    </div>
+                    <div class="sys-pill">
+                        <span>FLAPS (F)</span>
+                        <span id="sys-flaps" class="off">0°</span>
+                    </div>
+                    <div class="sys-pill">
+                        <span>PHANH (SPACE)</span>
+                        <span id="sys-brake" class="off">NHẢ</span>
+                    </div>
+                    <div class="sys-pill">
+                        <span>ĐỘNG CƠ (AB)</span>
+                        <span id="sys-ab" class="off">BÌNH THƯỜNG</span>
+                    </div>
+                    <div class="sys-pill" style="grid-column: span 2;">
+                        <span>TRẠNG THÁI BAY</span>
+                        <span id="sys-flight-state" class="on">ĐỖ ĐƯỜNG BĂNG 09</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Điều khiển Trọng lực (Tính năng đặc biệt) -->
+            <div class="hud-card gravity-panel hud-interactive">
+                <div class="gravity-header">
+                    <span class="gravity-title">🌌 ĐIỀU KHIỂN TRỌNG LỰC ([ / ])</span>
+                    <span class="gravity-readout" id="gravity-readout">1.00 g (Trái Đất)</span>
+                </div>
+                <div class="gravity-slider-row">
+                    <span style="font-size:11px; color:#c084fc;">-1g</span>
+                    <input type="range" id="gravity-slider" min="-1" max="3" step="0.01" value="1">
+                    <span style="font-size:11px; color:#c084fc;">3g</span>
+                </div>
+                <div class="gravity-presets">
+                    <button class="grav-btn" data-g="0.16">🌙 Mặt Trăng (0.16g)</button>
+                    <button class="grav-btn" data-g="0.38">🔴 Sao Hỏa (0.38g)</button>
+                    <button class="grav-btn" data-g="0">🛰️ Không TL (0g)</button>
+                    <button class="grav-btn" data-g="-1">🙃 Đảo ngược (-1g)</button>
+                    <button class="grav-btn active" data-g="1">🌍 Trái Đất (1g)</button>
+                    <button class="grav-btn" data-g="3">⚡ Siêu nặng (3g)</button>
+                </div>
+            </div>
+
+            <!-- Bản đồ thu nhỏ (Mini-map) -->
+            <div class="hud-card minimap-card">
+                <canvas id="minimap-canvas" width="165" height="165"></canvas>
+                <div class="minimap-legend">
+                    <span>🛫 Sân bay RWY 09/27</span>
+                    <span id="minimap-coords">X:0 Z:0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Điều khiển cảm ứng cho điện thoại -->
+    <div id="touch-controls">
+        <div class="joystick-zone" id="joystick-zone">
+            <div class="joystick-knob" id="joystick-knob"></div>
+        </div>
+        <div class="touch-right-pad">
+            <button class="hud-btn" id="touch-thr-up">🔥 Tăng Ga (+)</button>
+            <button class="hud-btn" id="touch-thr-down">❄️ Giảm Ga (-)</button>
+            <button class="hud-btn" id="touch-gear">🛞 Bánh Đáp (G)</button>
+            <button class="hud-btn" id="touch-flaps">🪽 Flaps (F)</button>
+            <button class="hud-btn" id="touch-brake">🛑 Phanh</button>
+        </div>
+    </div>
+
+    <!-- Modal Màn hình Bắt đầu / Tạm dừng -->
+    <div id="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header">
+                <div>
+                    <div class="game-title">✈️ AERO-G: MÔ PHỎNG BAY 3D</div>
+                    <div class="game-subtitle">Đồ họa PBR điện ảnh • Khí động học bán thực tế • Điều khiển Trọng lực Đa hành tinh</div>
+                </div>
+                <div style="text-align: right; font-size: 12px; color: #38bdf8;">
+                    Three.js WebGL • 60 FPS Instancing
+                </div>
+            </div>
+
+            <div class="modal-grid">
+                <div class="info-section">
+                    <h3>🎮 Hướng dẫn phím điều khiển</h3>
+                    <div class="key-list">
+                        <div class="key-item"><kbd>W</kbd> / <kbd>S</kbd> <span>Chúc / Ngóc mũi (Pitch)</span></div>
+                        <div class="key-item"><kbd>A</kbd> / <kbd>D</kbd> <span>Nghiêng cánh (Roll)</span></div>
+                        <div class="key-item"><kbd>Q</kbd> / <kbd>E</kbd> <span>Bánh lái hướng (Yaw)</span></div>
+                        <div class="key-item"><kbd>Shift</kbd> / <kbd>Ctrl</kbd> <span>Tăng / Giảm ga</span></div>
+                        <div class="key-item"><kbd>Space</kbd> <span>Phanh bánh & Phanh khí</span></div>
+                        <div class="key-item"><kbd>G</kbd> <span>Thu / Thả bánh đáp</span></div>
+                        <div class="key-item"><kbd>F</kbd> <span>Chỉnh cánh tà (Flaps)</span></div>
+                        <div class="key-item"><kbd>C</kbd> <span>Đổi Camera (3 góc nhìn)</span></div>
+                        <div class="key-item"><kbd>[</kbd> / <kbd>]</kbd> <span>Giảm / Tăng Trọng lực</span></div>
+                        <div class="key-item"><kbd>N</kbd> <span>Chuyển Ngày / Đêm</span></div>
+                        <div class="key-item"><kbd>M</kbd> <span>Bật/Tắt lái bằng chuột</span></div>
+                        <div class="key-item"><kbd>R</kbd> / <kbd>B</kbd> <span>Về đường băng / Bay ngay</span></div>
+                    </div>
+                </div>
+
+                <div class="info-section">
+                    <h3>⚙️ Cài đặt Đồ họa & Khởi hành</h3>
+                    <div class="settings-row">
+                        <span>Chất lượng đồ họa:</span>
+                        <div class="btn-group">
+                            <button class="hud-btn quality-opt" data-q="low">Thấp</button>
+                            <button class="hud-btn quality-opt" data-q="medium">Trung bình</button>
+                            <button class="hud-btn quality-opt active" data-q="high">Cao (PBR + Bóng đổ)</button>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span>Thời gian ban đầu:</span>
+                        <div class="btn-group">
+                            <button class="hud-btn time-opt active" data-t="day">☀️ Ngày</button>
+                            <button class="hud-btn time-opt" data-t="sunset">🌇 Hoàng hôn</button>
+                            <button class="hud-btn time-opt" data-t="night">🌃 Ban đêm</button>
+                        </div>
+                    </div>
+                    <div class="settings-row">
+                        <span>Chế độ điều khiển:</span>
+                        <div class="btn-group">
+                            <button class="hud-btn" id="modal-touch-toggle">📱 Joystick Cảm ứng: Tự động</button>
+                        </div>
+                    </div>
+                    <p style="font-size: 12px; color: #94a3b8; line-height: 1.5; margin-top: 10px;">
+                        💡 <b>Mẹo cất cánh:</b> Giữ <kbd>Shift</kbd> lên 90-100% ga, bật Flaps <kbd>F</kbd> (15°), đợi tốc độ đạt <b>> 115 KT</b> rồi giữ nhẹ <kbd>S</kbd> để ngóc mũi rời đường băng, sau đó bấm <kbd>G</kbd> thu bánh đáp.
+                    </p>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <div style="display:flex; gap: 8px;">
+                    <button class="hud-btn" id="btn-spawn-air" style="padding: 10px 16px; font-size: 13px;">🌤️ Bắt đầu đang bay trên không (B)</button>
+                </div>
+                <button class="start-btn" id="btn-start-game">🚀 BẮT ĐẦU BAY NGAY</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Thư viện Three.js từ CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+    /**
+     * ============================================================================
+     * AERO-G: MÔ PHỎNG BAY 3D & ĐIỀU KHIỂN TRỌNG LỰC
+     * Toàn bộ mã nguồn được chia thành các phân hệ rõ ràng, chú thích tiếng Việt.
+     * ============================================================================
+     */
+
+    // ============================================================================
+    // 1. CẤU HÌNH TOÀN CỤC & TRẠNG THÁI TRÒ CHƠI
+    // ============================================================================
+    const CONFIG = {
+        worldSize: 16000,
+        runwayX: -1200,
+        runwayZ: 400,
+        runwayLength: 1500,
+        runwayWidth: 54,
+        cityCenterX: 650,
+        cityCenterZ: -550,
+        suburbCenterX: -250,
+        suburbCenterZ: -750,
+        riverZOffset: -120,
+        waterLevel: 0.0,
+        baseTerrainY: 4.5, // Độ cao mặt phẳng sân bay & thành phố
+        gravityEarth: 9.81
+    };
+
+    const GAME = {
+        paused: true,
+        quality: 'high', // 'low', 'medium', 'high'
+        timeMode: 'day', // 'day', 'sunset', 'night'
+        timeTransition: 0, // 0: Ngày, 0.5: Hoàng hôn, 1.0: Đêm
+        targetTimeTransition: 0,
+        gravityG: 1.0,
+        targetGravityG: 1.0,
+        cameraMode: 0, // 0: Sau lưng (Follow), 1: Buồng lái (Cockpit), 2: Điện ảnh / Orbit
+        mouseSteer: false,
+        mouseX: 0,
+        mouseY: 0,
+        orbitAngleX: 0.45,
+        orbitAngleY: 0.25,
+        fps: 60,
+        frameCount: 0,
+        fpsTimer: 0,
+        alertTimer: 0,
+        clock: new THREE.Clock()
+    };
+
+    // ============================================================================
+    // 2. HÀM TOÁN HỌC & NHIỄU ĐỊA HÌNH (PROCEDURAL NOISE)
+    // ============================================================================
+    const MathUtils = {
+        clamp: (v, min, max) => Math.max(min, Math.min(max, v)),
+        lerp: (a, b, t) => a + (b - a) * t,
+        smoothstep: (edge0, edge1, x) => {
+            const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+            return t * t * (3 - 2 * t);
+        },
+        hash2D: (x, z) => {
+            const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453123;
+            return n - Math.floor(n);
+        },
+        noise2D(x, z) {
+            const xi = Math.floor(x), zi = Math.floor(z);
+            const xf = x - xi, zf = z - zi;
+            const u = xf * xf * (3 - 2 * xf);
+            const v = zf * zf * (3 - 2 * zf);
+            const a = this.hash2D(xi, zi);
+            const b = this.hash2D(xi + 1, zi);
+            const c = this.hash2D(xi, zi + 1);
+            const d = this.hash2D(xi + 1, zi + 1);
+            return this.lerp(this.lerp(a, b, u), this.lerp(c, d, u), v);
+        },
+        fbm(x, z, octaves = 4) {
+            let val = 0, amp = 0.5, freq = 1;
+            for (let i = 0; i < octaves; i++) {
+                val += amp * this.noise2D(x * freq, z * freq);
+                freq *= 2.03;
+                amp *= 0.5;
+            }
+            return val;
+        }
+    };
+
+    /**
+     * Hàm tính độ cao địa hình (Terrain Heightmap) tại tọa độ (x, z) bất kỳ.
+     * Đảm bảo vùng sân bay và trung tâm thành phố bằng phẳng, có dòng sông chảy qua,
+     * xung quanh là đồi ngoại ô và dãy núi hùng vĩ.
+     */
+    function getTerrainHeight(x, z) {
+        // Khoảng cách tới sân bay (hình hộp chữ nhật mở rộng)
+        const dxRwy = Math.max(0, Math.abs(x - CONFIG.runwayX) - (CONFIG.runwayLength * 0.65));
+        const dzRwy = Math.max(0, Math.abs(z - CONFIG.runwayZ) - 360);
+        const distRwy = Math.hypot(dxRwy, dzRwy);
+        const rwyFlatMask = MathUtils.smoothstep(0, 420, distRwy);
+
+        // Khoảng cách tới thành phố & ngoại ô
+        const distCity = Math.hypot(x - CONFIG.cityCenterX, z - CONFIG.cityCenterZ);
+        const cityFlatMask = MathUtils.smoothstep(550, 1250, distCity);
+
+        const distSuburb = Math.hypot(x - CONFIG.suburbCenterX, z - CONFIG.suburbCenterZ);
+        const suburbFlatMask = MathUtils.smoothstep(320, 750, distSuburb);
+
+        // Dòng sông uốn lượn chảy giữa sân bay và thành phố
+        const riverCurveZ = CONFIG.riverZOffset + Math.sin(x * 0.0014) * 180 + Math.cos(x * 0.0005) * 90;
+        const distRiver = Math.abs(z - riverCurveZ);
+        const riverMask = 1.0 - MathUtils.smoothstep(45, 135, distRiver);
+
+        // Độ cao đồi núi tự nhiên bằng FBM
+        const n1 = MathUtils.fbm(x * 0.00045 + 10.5, z * 0.00045 + 22.1, 4);
+        const n2 = MathUtils.fbm(x * 0.0012 - 5.2, z * 0.0012 + 8.7, 3);
+        let mountainFactor = Math.pow(Math.max(0, n1 - 0.34) * 1.55, 2.15) * 620 + n2 * 42;
+
+        // Dãy núi cao hơn ở phía Bắc (z < -1300) và phía Đông/Tây xa
+        const radialDist = Math.hypot(x, z);
+        const ringBoost = MathUtils.smoothstep(1400, 3600, radialDist) * 260;
+        let rawHeight = CONFIG.baseTerrainY + (mountainFactor + ringBoost) * rwyFlatMask * cityFlatMask * (0.25 + 0.75 * suburbFlatMask);
+
+        // Hạ thấp lòng sông xuống dưới mực nước biển
+        rawHeight = MathUtils.lerp(rawHeight, -7.5, riverMask * rwyFlatMask);
+
+        // Bờ biển phía Nam xa (z > 1900)
+        const seaFade = MathUtils.smoothstep(1700, 2700, z);
+        rawHeight = MathUtils.lerp(rawHeight, -9.0, seaFade);
+
+        return rawHeight;
+    }
+
+    function getRiverCenterZ(x) {
+        return CONFIG.riverZOffset + Math.sin(x * 0.0014) * 180 + Math.cos(x * 0.0005) * 90;
+    }
+
+    // ============================================================================
+    // 3. HỆ THỐNG ÂM THANH WEB AUDIO API (KHÔNG DÙNG FILE NGOÀI)
+    // ============================================================================
+    class SoundEngine {
+        constructor() {
+            this.ctx = null;
+            this.enabled = true;
+            this.initialized = false;
+            this.turbineOsc = null;
+            this.rumbleGain = null;
+            this.turbineGain = null;
+            this.windGain = null;
+            this.windFilter = null;
+            this.abGain = null;
+            this.stallOsc = null;
+            this.stallGain = null;
+        }
+
+        init() {
+            if (this.initialized) return;
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioCtx();
+
+                // Tạo buffer tiếng ồn trắng / hồng cho động cơ phản lực & gió
+                const bufferSize = this.ctx.sampleRate * 2;
+                const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = noiseBuffer.getChannelData(0);
+                let b0 = 0, b1 = 0, b2 = 0;
+                for (let i = 0; i < bufferSize; i++) {
+                    const white = Math.random() * 2 - 1;
+                    b0 = 0.997 * b0 + white * 0.029;
+                    b1 = 0.985 * b1 + white * 0.032;
+                    b2 = 0.950 * b2 + white * 0.048;
+                    data[i] = (b0 + b1 + b2 + white * 0.18) * 0.7;
+                }
+
+                // 1. Tiếng gầm buồng đốt phản lực (Rumble)
+                const rumbleSource = this.ctx.createBufferSource();
+                rumbleSource.buffer = noiseBuffer;
+                rumbleSource.loop = true;
+                this.rumbleFilter = this.ctx.createBiquadFilter();
+                this.rumbleFilter.type = 'lowpass';
+                this.rumbleFilter.frequency.value = 180;
+                this.rumbleGain = this.ctx.createGain();
+                this.rumbleGain.gain.value = 0.0;
+                rumbleSource.connect(this.rumbleFilter);
+                this.rumbleFilter.connect(this.rumbleGain);
+                this.rumbleGain.connect(this.ctx.destination);
+                rumbleSource.start();
+
+                // 2. Tiếng rít cánh quạt tuabin cao tần (Turbine Whine)
+                this.turbineOsc = this.ctx.createOscillator();
+                this.turbineOsc.type = 'sawtooth';
+                this.turbineOsc.frequency.value = 160;
+                const turbineFilter = this.ctx.createBiquadFilter();
+                turbineFilter.type = 'bandpass';
+                turbineFilter.frequency.value = 500;
+                turbineFilter.Q.value = 3.5;
+                this.turbineGain = this.ctx.createGain();
+                this.turbineGain.gain.value = 0.0;
+                this.turbineOsc.connect(turbineFilter);
+                turbineFilter.connect(this.turbineGain);
+                this.turbineGain.connect(this.ctx.destination);
+                this.turbineOsc.start();
+
+                // 3. Tiếng gió lướt qua thân máy bay (Aerodynamic Wind)
+                const windSource = this.ctx.createBufferSource();
+                windSource.buffer = noiseBuffer;
+                windSource.loop = true;
+                this.windFilter = this.ctx.createBiquadFilter();
+                this.windFilter.type = 'bandpass';
+                this.windFilter.frequency.value = 400;
+                this.windFilter.Q.value = 1.2;
+                this.windGain = this.ctx.createGain();
+                this.windGain.gain.value = 0.0;
+                windSource.connect(this.windFilter);
+                this.windFilter.connect(this.windGain);
+                this.windGain.connect(this.ctx.destination);
+                windSource.start();
+
+                // 4. Còi báo thất tốc (Stall Warning Horn)
+                this.stallOsc = this.ctx.createOscillator();
+                this.stallOsc.type = 'square';
+                this.stallOsc.frequency.value = 880;
+                this.stallGain = this.ctx.createGain();
+                this.stallGain.gain.value = 0.0;
+                this.stallOsc.connect(this.stallGain);
+                this.stallGain.connect(this.ctx.destination);
+                this.stallOsc.start();
+
+                this.initialized = true;
+            } catch (e) {
+                console.warn('Không thể khởi tạo Web Audio API:', e);
+            }
+        }
+
+        update(throttle, speedMs, isStalling, isCrashed, paused) {
+            if (!this.initialized || !this.ctx) return;
+            if (paused || !this.enabled || isCrashed) {
+                const now = this.ctx.currentTime;
+                this.rumbleGain.gain.setTargetAtTime(0, now, 0.08);
+                this.turbineGain.gain.setTargetAtTime(0, now, 0.08);
+                this.windGain.gain.setTargetAtTime(0, now, 0.08);
+                this.stallGain.gain.setTargetAtTime(0, now, 0.05);
+                return;
+            }
+
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            const now = this.ctx.currentTime;
+
+            // Âm thanh động cơ theo % ga & đốt sau (Afterburner > 0.85)
+            const abBoost = throttle > 0.85 ? (throttle - 0.85) * 4.0 : 0;
+            this.rumbleFilter.frequency.setTargetAtTime(140 + throttle * 380 + abBoost * 320, now, 0.06);
+            this.rumbleGain.gain.setTargetAtTime(0.05 + throttle * 0.22 + abBoost * 0.12, now, 0.06);
+
+            this.turbineOsc.frequency.setTargetAtTime(170 + throttle * 460, now, 0.06);
+            this.turbineGain.gain.setTargetAtTime(0.012 + throttle * 0.032, now, 0.06);
+
+            // Âm thanh gió theo vận tốc bay
+            const speedRatio = MathUtils.clamp(speedMs / 180, 0, 1.5);
+            this.windFilter.frequency.setTargetAtTime(280 + speedRatio * 950, now, 0.08);
+            this.windGain.gain.setTargetAtTime(speedRatio * 0.16, now, 0.08);
+
+            // Còi báo thất tốc bíp ngắt quãng
+            if (isStalling) {
+                const beep = Math.sin(performance.now() * 0.028) > 0 ? 0.06 : 0.0;
+                this.stallGain.gain.setTargetAtTime(beep, now, 0.015);
+            } else {
+                this.stallGain.gain.setTargetAtTime(0, now, 0.04);
+            }
+        }
+
+        playExplosion() {
+            if (!this.initialized || !this.enabled || !this.ctx) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(130, now);
+            osc.frequency.exponentialRampToValueAtTime(22, now + 1.1);
+            gain.gain.setValueAtTime(0.45, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now);
+            osc.stop(now + 1.25);
+        }
+
+        playTouchdown() {
+            if (!this.initialized || !this.enabled || !this.ctx) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(520, now);
+            osc.frequency.exponentialRampToValueAtTime(190, now + 0.25);
+            gain.gain.setValueAtTime(0.14, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.3);
+        }
+
+        playGravityShift() {
+            if (!this.initialized || !this.enabled || !this.ctx) return;
+            const now = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(220, now);
+            osc.frequency.exponentialRampToValueAtTime(480, now + 0.35);
+            gain.gain.setValueAtTime(0.12, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start(now);
+            osc.stop(now + 0.4);
+        }
+    }
+
+    const sound = new SoundEngine();
+
+    // ============================================================================
+    // 4. TẠO TEXTURE THUẬT TOÁN (PROCEDURAL CANVAS TEXTURES)
+    // ============================================================================
+    const Textures = {
+        // Tạo texture cửa sổ nhà cao tầng (cả diffuse ban ngày và emissive phát sáng ban đêm)
+        createBuildingTextures() {
+            const diffCanvas = document.createElement('canvas');
+            diffCanvas.width = 256;
+            diffCanvas.height = 512;
+            const dCtx = diffCanvas.getContext('2d');
+
+            const emisCanvas = document.createElement('canvas');
+            emisCanvas.width = 256;
+            emisCanvas.height = 512;
+            const eCtx = emisCanvas.getContext('2d');
+
+            dCtx.fillStyle = '#334155';
+            dCtx.fillRect(0, 0, 256, 512);
+            eCtx.fillStyle = '#000000';
+            eCtx.fillRect(0, 0, 256, 512);
+
+            const cols = 8, rows = 24;
+            const padX = 6, padY = 5;
+            const cellW = 256 / cols, cellH = 512 / rows;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const x = c * cellW + padX;
+                    const y = r * cellH + padY;
+                    const w = cellW - padX * 2;
+                    const h = cellH - padY * 2;
+
+                    // Kính phản chiếu ban ngày
+                    dCtx.fillStyle = Math.random() > 0.3 ? '#64748b' : '#475569';
+                    dCtx.fillRect(x, y, w, h);
+
+                    // Đèn cửa sổ phát sáng ban đêm
+                    if (Math.random() > 0.36) {
+                        const warmPalette = ['#fef08a', '#fde047', '#fed7aa', '#bae6fd', '#fbbf24'];
+                        eCtx.fillStyle = warmPalette[Math.floor(Math.random() * warmPalette.length)];
+                        eCtx.fillRect(x, y, w, h);
+                    }
+                }
+            }
+
+            const diffTex = new THREE.CanvasTexture(diffCanvas);
+            diffTex.wrapS = diffTex.wrapT = THREE.RepeatWrapping;
+            const emisTex = new THREE.CanvasTexture(emisCanvas);
+            emisTex.wrapS = emisTex.wrapT = THREE.RepeatWrapping;
+            return { diffTex, emisTex };
+        },
+
+        // Texture mặt đường băng hoàn chỉnh với vạch kẻ, piano keys và số hiệu 09 / 27
+        createRunwayTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2048;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+
+            // Nền nhựa đường asphalt sẫm
+            ctx.fillStyle = '#1e242b';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Hạt nhám mặt đường và vết lốp máy bay ở hai đầu chạm đất
+            for (let i = 0; i < 6000; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.08)';
+                ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 3, 2);
+            }
+            ctx.fillStyle = 'rgba(10, 12, 15, 0.38)';
+            ctx.fillRect(260, 75, 340, 106);
+            ctx.fillRect(canvas.width - 600, 75, 340, 106);
+
+            // Vạch biên trắng dọc 2 bên đường băng
+            ctx.fillStyle = '#f1f5f9';
+            ctx.fillRect(20, 12, canvas.width - 40, 6);
+            ctx.fillRect(20, canvas.height - 18, canvas.width - 40, 6);
+
+            // Vạch ngưỡng đường băng (Threshold Piano Keys) hai đầu
+            for (let i = 0; i < 8; i++) {
+                const y = 26 + i * 26;
+                if (i === 3 || i === 4) continue;
+                ctx.fillRect(35, y, 75, 16);
+                ctx.fillRect(canvas.width - 110, y, 75, 16);
+            }
+
+            // Vạch tim đường băng đứt đoạn (Centerline)
+            for (let x = 230; x < canvas.width - 230; x += 72) {
+                ctx.fillRect(x, canvas.height / 2 - 4, 42, 8);
+            }
+
+            // Điểm ngắm chạm bánh (Aiming Point Markers)
+            ctx.fillRect(330, 46, 95, 28);
+            ctx.fillRect(330, canvas.height - 74, 95, 28);
+            ctx.fillRect(canvas.width - 425, 46, 95, 28);
+            ctx.fillRect(canvas.width - 425, canvas.height - 74, 95, 28);
+
+            // Số hiệu đường băng "09" và "27"
+            ctx.save();
+            ctx.fillStyle = '#f8fafc';
+            ctx.font = 'bold 54px Consolas, monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            ctx.save();
+            ctx.translate(165, canvas.height / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.fillText('09', 0, 0);
+            ctx.restore();
+
+            ctx.save();
+            ctx.translate(canvas.width - 165, canvas.height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('27', 0, 0);
+            ctx.restore();
+            ctx.restore();
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.anisotropy = 8;
+            return tex;
+        },
+
+        // Texture hạt sáng mềm (Glow / Cloud / Smoke Sprite)
+        createRadialSprite(innerColor, outerColor) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(64, 64, 2, 64, 64, 64);
+            grad.addColorStop(0, innerColor);
+            grad.addColorStop(0.45, outerColor);
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 128, 128);
+            return new THREE.CanvasTexture(canvas);
+        }
+    };
+
+
+    // ============================================================================
+    // 5. KHỞI TẠO THREE.JS, ÁNH SÁNG ĐIỆN ẢNH, BẦU TRỜI & MẶT NƯỚC
+    // ============================================================================
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x9ec5fe, 0.00018);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.4, 15000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    container.appendChild(renderer.domElement);
+
+    // Hệ thống ánh sáng mặt trời, bầu trời và môi trường
+    const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x3f523a, 0.65);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.35);
+    sunLight.position.set(1600, 1250, -1400);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 20;
+    sunLight.shadow.camera.far = 3600;
+    const shadowExtent = 340;
+    sunLight.shadow.camera.left = -shadowExtent;
+    sunLight.shadow.camera.right = shadowExtent;
+    sunLight.shadow.camera.top = shadowExtent;
+    sunLight.shadow.camera.bottom = -shadowExtent;
+    sunLight.shadow.bias = -0.00035;
+    scene.add(sunLight);
+    scene.add(sunLight.target);
+
+    const sunDir = new THREE.Vector3(0.55, 0.48, -0.68).normalize();
+
+    // Bầu trời Shader (Atmospheric Scattering + Sun Corona + Night Stars)
+    const skyUniforms = {
+        uSunDir: { value: sunDir.clone() },
+        uTopColor: { value: new THREE.Color(0x0b3c7c) },
+        uHorizonColor: { value: new THREE.Color(0x93c5fd) },
+        uSunColor: { value: new THREE.Color(0xfff7ed) },
+        uNightFactor: { value: 0.0 }
+    };
+
+    const skyMat = new THREE.ShaderMaterial({
+        uniforms: skyUniforms,
+        side: THREE.BackSide,
+        depthWrite: false,
+        vertexShader: `
+            varying vec3 vWorldPos;
+            void main() {
+                vec4 wp = modelMatrix * vec4(position, 1.0);
+                vWorldPos = wp.xyz;
+                gl_Position = projectionMatrix * viewMatrix * wp;
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vWorldPos;
+            uniform vec3 uSunDir;
+            uniform vec3 uTopColor;
+            uniform vec3 uHorizonColor;
+            uniform vec3 uSunColor;
+            uniform float uNightFactor;
+
+            float hash(vec3 p) {
+                p = fract(p * 0.3183099 + 0.1);
+                p *= 17.0;
+                return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+            }
+
+            void main() {
+                vec3 dir = normalize(vWorldPos - cameraPosition);
+                float h = clamp(dir.y, 0.0, 1.0);
+                vec3 col = mix(uHorizonColor, uTopColor, pow(h, 0.58));
+
+                // Quầng sáng mặt trời (Mie scattering + Sun disc)
+                float sunAmt = max(dot(dir, uSunDir), 0.0);
+                col += uSunColor * pow(sunAmt, 12.0) * 0.38;
+                col += uSunColor * smoothstep(0.9982, 0.9997, sunAmt) * 2.6;
+
+                // Ngôi sao lấp lánh ban đêm
+                if (uNightFactor > 0.05 && dir.y > 0.02) {
+                    float starNoise = hash(floor(dir * 420.0));
+                    float star = smoothstep(0.9955, 0.9995, starNoise) * uNightFactor * smoothstep(0.02, 0.25, dir.y);
+                    col += vec3(0.85, 0.92, 1.0) * star * 1.4;
+                }
+
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `
+    });
+    const skyDome = new THREE.Mesh(new THREE.SphereGeometry(12500, 32, 20), skyMat);
+    scene.add(skyDome);
+
+    // Mặt nước (Sông & Biển) với Shader sóng động và phản chiếu ánh mặt trời
+    const waterUniforms = {
+        uTime: { value: 0 },
+        uSunDir: { value: sunDir.clone() },
+        uSunColor: { value: new THREE.Color(0xfffbeb) },
+        uWaterDeep: { value: new THREE.Color(0x063455) },
+        uWaterShallow: { value: new THREE.Color(0x0e6b8a) },
+        uSkyHorizon: { value: new THREE.Color(0x93c5fd) }
+    };
+
+    const waterMat = new THREE.ShaderMaterial({
+        uniforms: waterUniforms,
+        transparent: true,
+        vertexShader: `
+            uniform float uTime;
+            varying vec3 vWorldPos;
+            varying float vWave;
+            void main() {
+                vec3 pos = position;
+                vec4 wp = modelMatrix * vec4(pos, 1.0);
+                float w1 = sin(wp.x * 0.035 + uTime * 1.8) * cos(wp.z * 0.03 + uTime * 1.3) * 0.35;
+                float w2 = sin(wp.x * 0.09 - uTime * 2.4 + wp.z * 0.07) * 0.15;
+                wp.y += w1 + w2;
+                vWave = w1 + w2;
+                vWorldPos = wp.xyz;
+                gl_Position = projectionMatrix * viewMatrix * wp;
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vWorldPos;
+            varying float vWave;
+            uniform float uTime;
+            uniform vec3 uSunDir;
+            uniform vec3 uSunColor;
+            uniform vec3 uWaterDeep;
+            uniform vec3 uWaterShallow;
+            uniform vec3 uSkyHorizon;
+
+            void main() {
+                vec3 viewDir = normalize(cameraPosition - vWorldPos);
+                // Vector pháp tuyến giả lập sóng gợn
+                float nx = cos(vWorldPos.x * 0.14 + uTime * 2.2) * 0.08 + sin(vWorldPos.z * 0.19 - uTime * 1.7) * 0.05;
+                float nz = sin(vWorldPos.z * 0.15 + uTime * 2.0) * 0.08 + cos(vWorldPos.x * 0.11 + uTime * 1.5) * 0.05;
+                vec3 normal = normalize(vec3(nx, 1.0, nz));
+
+                // Hiệu ứng Fresnel phản chiếu bầu trời
+                float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 3.2);
+                vec3 waterCol = mix(uWaterDeep, uWaterShallow, clamp(vWave + 0.5, 0.0, 1.0));
+                vec3 col = mix(waterCol, uSkyHorizon, fresnel * 0.65);
+
+                // Phản chiếu lấp lánh mặt trời (Specular Highlight)
+                vec3 refl = reflect(-uSunDir, normal);
+                float spec = pow(max(dot(viewDir, refl), 0.0), 96.0);
+                col += uSunColor * spec * 1.65;
+
+                gl_FragColor = vec4(col, 0.92);
+            }
+        `
+    });
+    const waterGeo = new THREE.PlaneGeometry(CONFIG.worldSize, CONFIG.worldSize, 128, 128);
+    waterGeo.rotateX(-Math.PI / 2);
+    const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+    waterMesh.position.y = CONFIG.waterLevel;
+    scene.add(waterMesh);
+
+    // ============================================================================
+    // 6. TẠO ĐỊA HÌNH, RỪNG CÂY, CỎ & MÂY THỂ TÍCH (TERRAIN & VOLUMETRIC CLOUDS)
+    // ============================================================================
+    const colliders = []; // Danh sách các hộp va chạm (nhà cao tầng, tháp, nhà ga...)
+    const dynamicLightMaterials = []; // Danh sách vật liệu phát sáng ban đêm
+
+    function buildTerrain() {
+        const segs = 220;
+        const geo = new THREE.PlaneGeometry(CONFIG.worldSize, CONFIG.worldSize, segs, segs);
+        geo.rotateX(-Math.PI / 2);
+        const pos = geo.attributes.position;
+        const colors = new Float32Array(pos.count * 3);
+
+        const cSand = new THREE.Color(0xd6c79c);
+        const cGrass = new THREE.Color(0x3f6a34);
+        const cForest = new THREE.Color(0x2d4c28);
+        const cRock = new THREE.Color(0x57534e);
+        const cSnow = new THREE.Color(0xf1f5f9);
+        const cCityGround = new THREE.Color(0x333942);
+        const tmp = new THREE.Color();
+
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const z = pos.getZ(i);
+            const y = getTerrainHeight(x, z);
+            pos.setY(i, y);
+
+            const distCity = Math.hypot(x - CONFIG.cityCenterX, z - CONFIG.cityCenterZ);
+            if (y < 2.2) {
+                tmp.copy(cSand);
+            } else if (distCity < 620 && y < 12) {
+                tmp.copy(cCityGround).lerp(cGrass, MathUtils.smoothstep(380, 620, distCity));
+            } else if (y < 38) {
+                tmp.copy(cGrass).lerp(cForest, MathUtils.clamp((y - 5) / 33, 0, 1));
+            } else if (y < 155) {
+                tmp.copy(cForest).lerp(cRock, MathUtils.clamp((y - 38) / 110, 0, 1));
+            } else {
+                tmp.copy(cRock).lerp(cSnow, MathUtils.clamp((y - 155) / 95, 0, 1));
+            }
+
+            colors[i * 3] = tmp.r;
+            colors[i * 3 + 1] = tmp.g;
+            colors[i * 3 + 2] = tmp.b;
+        }
+
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geo.computeVertexNormals();
+
+        const mat = new THREE.MeshStandardMaterial({
+            vertexColors: true,
+            roughness: 0.88,
+            metalness: 0.04
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+    }
+
+    // Tạo cây cối & thảm cỏ bằng InstancedMesh
+    let treeCrownInst, treeTrunkInst, grassInst, cloudInst;
+
+    function buildVegetationAndClouds() {
+        const treeCount = 2600;
+        const trunkGeo = new THREE.CylinderGeometry(0.45, 0.7, 3.5, 6);
+        trunkGeo.translate(0, 1.75, 0);
+        const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 });
+        treeTrunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
+
+        const crownGeo = new THREE.ConeGeometry(3.2, 8.5, 7);
+        crownGeo.translate(0, 6.5, 0);
+        const crownMat = new THREE.MeshStandardMaterial({ color: 0x2d5a27, roughness: 0.82 });
+        treeCrownInst = new THREE.InstancedMesh(crownGeo, crownMat, treeCount);
+        treeCrownInst.castShadow = true;
+        treeCrownInst.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        const col = new THREE.Color();
+        let placed = 0, attempts = 0;
+
+        while (placed < treeCount && attempts < treeCount * 5) {
+            attempts++;
+            const x = (Math.random() - 0.5) * 6800;
+            const z = (Math.random() - 0.5) * 6800;
+            // Tránh đường băng và trung tâm thành phố
+            if (Math.abs(x - CONFIG.runwayX) < 920 && Math.abs(z - CONFIG.runwayZ) < 280) continue;
+            if (Math.hypot(x - CONFIG.cityCenterX, z - CONFIG.cityCenterZ) < 520) continue;
+
+            const y = getTerrainHeight(x, z);
+            if (y < 3.0 || y > 135) continue;
+
+            const s = 0.75 + Math.random() * 1.15;
+            dummy.position.set(x, y, z);
+            dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
+            dummy.scale.set(s, s * (0.85 + Math.random() * 0.4), s);
+            dummy.updateMatrix();
+
+            treeTrunkInst.setMatrixAt(placed, dummy.matrix);
+            treeCrownInst.setMatrixAt(placed, dummy.matrix);
+            col.setHSL(0.28 + (Math.random() - 0.5) * 0.06, 0.48, 0.24 + Math.random() * 0.1);
+            treeCrownInst.setColorAt(placed, col);
+            placed++;
+        }
+        treeTrunkInst.count = placed;
+        treeCrownInst.count = placed;
+        scene.add(treeTrunkInst);
+        scene.add(treeCrownInst);
+
+        // Thảm cỏ quanh sân bay và đồi
+        const grassCount = 3500;
+        const grassGeo = new THREE.ConeGeometry(0.65, 1.6, 4);
+        grassGeo.translate(0, 0.8, 0);
+        const grassMat = new THREE.MeshStandardMaterial({ color: 0x4d7c3f, roughness: 0.9 });
+        grassInst = new THREE.InstancedMesh(grassGeo, grassMat, grassCount);
+        let gPlaced = 0;
+        for (let i = 0; i < grassCount * 2 && gPlaced < grassCount; i++) {
+            const x = (Math.random() - 0.5) * 3800 - 300;
+            const z = (Math.random() - 0.5) * 3800;
+            if (Math.abs(x - CONFIG.runwayX) < 790 && Math.abs(z - CONFIG.runwayZ) < 70) continue;
+            const y = getTerrainHeight(x, z);
+            if (y < 3.5 || y > 45) continue;
+            dummy.position.set(x, y, z);
+            dummy.rotation.set(0, Math.random() * Math.PI, 0);
+            dummy.scale.set(1 + Math.random(), 0.7 + Math.random() * 0.9, 1 + Math.random());
+            dummy.updateMatrix();
+            grassInst.setMatrixAt(gPlaced++, dummy.matrix);
+        }
+        grassInst.count = gPlaced;
+        scene.add(grassInst);
+
+        // Mây thể tích (Multi-puff Volumetric Cloud Clusters)
+        const cloudPuffs = 520;
+        const cloudGeo = new THREE.DodecahedronGeometry(1, 1);
+        const cloudMat = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            roughness: 0.95,
+            metalness: 0.0,
+            transparent: true,
+            opacity: 0.86
+        });
+        cloudInst = new THREE.InstancedMesh(cloudGeo, cloudMat, cloudPuffs);
+        let cIdx = 0;
+        for (let c = 0; c < 65; c++) {
+            const cx = (Math.random() - 0.5) * 10500;
+            const cz = (Math.random() - 0.5) * 10500;
+            const cy = 420 + Math.random() * 480;
+            const puffsInCloud = 6 + Math.floor(Math.random() * 4);
+            for (let p = 0; p < puffsInCloud && cIdx < cloudPuffs; p++) {
+                dummy.position.set(
+                    cx + (Math.random() - 0.5) * 180,
+                    cy + (Math.random() - 0.5) * 32,
+                    cz + (Math.random() - 0.5) * 150
+                );
+                dummy.rotation.set(Math.random(), Math.random(), Math.random());
+                const sx = 55 + Math.random() * 65;
+                const sy = 24 + Math.random() * 22;
+                const sz = 48 + Math.random() * 55;
+                dummy.scale.set(sx, sy, sz);
+                dummy.updateMatrix();
+                cloudInst.setMatrixAt(cIdx++, dummy.matrix);
+            }
+        }
+        cloudInst.count = cIdx;
+        scene.add(cloudInst);
+    }
+
+    // ============================================================================
+    // 7. XÂY DỰNG SÂN BAY HOÀN CHỈNH (ĐƯỜNG BĂNG, THÁP, HANGAR, PAPI, CỘT GIÓ)
+    // ============================================================================
+    let beaconHead = null;
+    let beaconBeam = null;
+    let windsockCone = null;
+    const papiLights = [];
+
+    function buildAirport() {
+        const y0 = CONFIG.baseTerrainY + 0.08;
+        const rx = CONFIG.runwayX;
+        const rz = CONFIG.runwayZ;
+
+        // 1. Đường băng chính (Runway 09 / 27)
+        const rwyTex = Textures.createRunwayTexture();
+        const rwyGeo = new THREE.PlaneGeometry(CONFIG.runwayLength, CONFIG.runwayWidth);
+        rwyGeo.rotateX(-Math.PI / 2);
+        const rwyMat = new THREE.MeshStandardMaterial({
+            map: rwyTex,
+            roughness: 0.78,
+            metalness: 0.08
+        });
+        const rwyMesh = new THREE.Mesh(rwyGeo, rwyMat);
+        rwyMesh.position.set(rx, y0 + 0.05, rz);
+        rwyMesh.receiveShadow = true;
+        scene.add(rwyMesh);
+
+        // 2. Đường lăn song song (Parallel Taxiway) & sân đỗ (Apron)
+        const taxiMat = new THREE.MeshStandardMaterial({ color: 0x262d36, roughness: 0.84 });
+        const taxiGeo = new THREE.PlaneGeometry(CONFIG.runwayLength - 120, 24);
+        taxiGeo.rotateX(-Math.PI / 2);
+        const taxiMesh = new THREE.Mesh(taxiGeo, taxiMat);
+        taxiMesh.position.set(rx, y0 + 0.03, rz - 75);
+        taxiMesh.receiveShadow = true;
+        scene.add(taxiMesh);
+
+        // Vạch vàng dẫn đường lăn
+        const yellowLineMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+        const lineGeo = new THREE.PlaneGeometry(CONFIG.runwayLength - 140, 0.7);
+        lineGeo.rotateX(-Math.PI / 2);
+        const taxiLine = new THREE.Mesh(lineGeo, yellowLineMat);
+        taxiLine.position.set(rx, y0 + 0.06, rz - 75);
+        scene.add(taxiLine);
+
+        // Các đường lăn nối (Connecting Taxiways)
+        for (let offset of [-580, -200, 200, 580]) {
+            const connGeo = new THREE.PlaneGeometry(22, 65);
+            connGeo.rotateX(-Math.PI / 2);
+            const conn = new THREE.Mesh(connGeo, taxiMat);
+            conn.position.set(rx + offset, y0 + 0.03, rz - 40);
+            scene.add(conn);
+        }
+
+        // Sân đỗ máy bay (Apron)
+        const apronGeo = new THREE.PlaneGeometry(580, 110);
+        apronGeo.rotateX(-Math.PI / 2);
+        const apron = new THREE.Mesh(apronGeo, taxiMat);
+        apron.position.set(rx, y0 + 0.03, rz - 140);
+        apron.receiveShadow = true;
+        scene.add(apron);
+
+        // 3. Nhà ga hành khách (Terminal Building)
+        const termMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.35, metalness: 0.4 });
+        const glassMat = new THREE.MeshStandardMaterial({
+            color: 0x38bdf8,
+            roughness: 0.15,
+            metalness: 0.8,
+            emissive: 0x0284c7,
+            emissiveIntensity: 0.25
+        });
+        dynamicLightMaterials.push({ mat: glassMat, dayIntensity: 0.15, nightIntensity: 1.25 });
+
+        const terminal = new THREE.Mesh(new THREE.BoxGeometry(240, 22, 46), termMat);
+        terminal.position.set(rx - 40, y0 + 11, rz - 210);
+        terminal.castShadow = true;
+        terminal.receiveShadow = true;
+        scene.add(terminal);
+        colliders.push({ x: rx - 40, z: rz - 210, rx: 122, rz: 25, maxY: y0 + 23 });
+
+        const termGlass = new THREE.Mesh(new THREE.BoxGeometry(230, 14, 48), glassMat);
+        termGlass.position.set(rx - 40, y0 + 11, rz - 210);
+        scene.add(termGlass);
+
+        // 4. Tháp kiểm soát không lưu (ATC Control Tower) + Đèn xoay (Rotating Beacon)
+        const towerX = rx + 135, towerZ = rz - 205;
+        const towerShaft = new THREE.Mesh(new THREE.CylinderGeometry(6, 9, 58, 12), termMat);
+        towerShaft.position.set(towerX, y0 + 29, towerZ);
+        towerShaft.castShadow = true;
+        scene.add(towerShaft);
+
+        const towerCab = new THREE.Mesh(new THREE.CylinderGeometry(11, 8.5, 10, 12), glassMat);
+        towerCab.position.set(towerX, y0 + 62, towerZ);
+        scene.add(towerCab);
+
+        const towerRoof = new THREE.Mesh(new THREE.CylinderGeometry(12, 11, 2.5, 12), termMat);
+        towerRoof.position.set(towerX, y0 + 68, towerZ);
+        scene.add(towerRoof);
+        colliders.push({ x: towerX, z: towerZ, rx: 12, rz: 12, maxY: y0 + 74 });
+
+        beaconHead = new THREE.Group();
+        beaconHead.position.set(towerX, y0 + 71, towerZ);
+        const coneGeo = new THREE.ConeGeometry(14, 90, 12, 1, true);
+        coneGeo.rotateX(Math.PI / 2);
+        coneGeo.translate(0, 0, 45);
+        const coneMat = new THREE.MeshBasicMaterial({
+            color: 0x34d399,
+            transparent: true,
+            opacity: 0.22,
+            side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        beaconBeam = new THREE.Mesh(coneGeo, coneMat);
+        beaconHead.add(beaconBeam);
+        scene.add(beaconHead);
+
+        // 5. Nhà chứa máy bay (Hangars)
+        const hangarMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5, metalness: 0.5 });
+        for (let i = 0; i < 3; i++) {
+            const hx = rx - 250 - i * 75;
+            const hz = rz - 195;
+            const hBox = new THREE.Mesh(new THREE.BoxGeometry(52, 18, 46), hangarMat);
+            hBox.position.set(hx, y0 + 9, hz);
+            hBox.castShadow = true;
+            scene.add(hBox);
+            colliders.push({ x: hx, z: hz, rx: 27, rz: 24, maxY: y0 + 20 });
+        }
+
+        // 6. Cột gió (Animated Windsock) cạnh đường băng
+        const pole = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.18, 0.22, 10, 8),
+            new THREE.MeshStandardMaterial({ color: 0xe2e8f0 })
+        );
+        pole.position.set(rx - 520, y0 + 5, rz - 42);
+        scene.add(pole);
+
+        const sockGeo = new THREE.ConeGeometry(1.1, 5.5, 10, 3, true);
+        sockGeo.rotateZ(Math.PI / 2);
+        sockGeo.translate(2.7, 0, 0);
+        const sockMat = new THREE.MeshStandardMaterial({
+            color: 0xf97316,
+            emissive: 0xea580c,
+            emissiveIntensity: 0.25,
+            side: THREE.DoubleSide
+        });
+        windsockCone = new THREE.Mesh(sockGeo, sockMat);
+        windsockCone.position.set(rx - 520, y0 + 9.6, rz - 42);
+        scene.add(windsockCone);
+
+        // 7. Hệ thống 4 đèn dẫn đường hạ cánh PAPI (Precision Approach Path Indicator)
+        const papiStartX = rx - CONFIG.runwayLength / 2 + 230;
+        const papiZ = rz - CONFIG.runwayWidth / 2 - 10;
+        for (let i = 0; i < 4; i++) {
+            const pMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
+            const pMesh = new THREE.Mesh(new THREE.SphereGeometry(1.25, 8, 8), pMat);
+            pMesh.position.set(papiStartX, y0 + 1.3, papiZ - i * 4.5);
+            scene.add(pMesh);
+            papiLights.push({ mesh: pMesh, mat: pMat, thresholdDeg: 2.5 + i * 0.35 });
+        }
+
+        // 8. Đèn biên đường băng, đèn tim đường & đèn đường lăn (InstancedMesh phát sáng ban đêm)
+        const lightGeo = new THREE.SphereGeometry(0.65, 6, 6);
+        const edgeLightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+        const taxiLightMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+        const threshGreenMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+
+        const edgeCount = 120;
+        const edgeInst = new THREE.InstancedMesh(lightGeo, edgeLightMat, edgeCount);
+        const taxiInst = new THREE.InstancedMesh(lightGeo, taxiLightMat, 60);
+        const threshInst = new THREE.InstancedMesh(lightGeo, threshGreenMat, 24);
+        const dummy = new THREE.Object3D();
+
+        let eIdx = 0;
+        for (let x = -CONFIG.runwayLength / 2; x <= CONFIG.runwayLength / 2; x += 28) {
+            if (eIdx < edgeCount - 1) {
+                dummy.position.set(rx + x, y0 + 0.6, rz - CONFIG.runwayWidth / 2 - 1.2);
+                dummy.updateMatrix();
+                edgeInst.setMatrixAt(eIdx++, dummy.matrix);
+
+                dummy.position.set(rx + x, y0 + 0.6, rz + CONFIG.runwayWidth / 2 + 1.2);
+                dummy.updateMatrix();
+                edgeInst.setMatrixAt(eIdx++, dummy.matrix);
+            }
+        }
+        edgeInst.count = eIdx;
+        scene.add(edgeInst);
+
+        let tIdx = 0;
+        for (let x = -CONFIG.runwayLength / 2 + 80; x <= CONFIG.runwayLength / 2 - 80; x += 48) {
+            if (tIdx < 58) {
+                dummy.position.set(rx + x, y0 + 0.5, rz - 75 - 12);
+                dummy.updateMatrix();
+                taxiInst.setMatrixAt(tIdx++, dummy.matrix);
+                dummy.position.set(rx + x, y0 + 0.5, rz - 75 + 12);
+                dummy.updateMatrix();
+                taxiInst.setMatrixAt(tIdx++, dummy.matrix);
+            }
+        }
+        taxiInst.count = tIdx;
+        scene.add(taxiInst);
+
+        let thIdx = 0;
+        for (let z = -CONFIG.runwayWidth / 2; z <= CONFIG.runwayWidth / 2; z += 5) {
+            if (thIdx < 22) {
+                dummy.position.set(rx - CONFIG.runwayLength / 2 + 2, y0 + 0.6, rz + z);
+                dummy.updateMatrix();
+                threshInst.setMatrixAt(thIdx++, dummy.matrix);
+                dummy.position.set(rx + CONFIG.runwayLength / 2 - 2, y0 + 0.6, rz + z);
+                dummy.updateMatrix();
+                threshInst.setMatrixAt(thIdx++, dummy.matrix);
+            }
+        }
+        threshInst.count = thIdx;
+        scene.add(threshInst);
+
+        // 9. Vài máy bay đậu sẵn ở sân đỗ (Parked Aircraft)
+        for (let i = 0; i < 4; i++) {
+            const parked = createParkedPlaneMesh(i % 2 === 0 ? 0xe2e8f0 : 0x93c5fd);
+            parked.position.set(rx - 120 + i * 68, y0 + 2.2, rz - 145);
+            parked.rotation.y = Math.PI / 2;
+            scene.add(parked);
+        }
+    }
+
+    function createParkedPlaneMesh(colorHex) {
+        const g = new THREE.Group();
+        const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.35, metalness: 0.45 });
+        const darkMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5 });
+
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.2, 22, 10), mat);
+        body.rotation.z = Math.PI / 2;
+        g.add(body);
+
+        const wings = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.25, 24), mat);
+        g.add(wings);
+
+        const tail = new THREE.Mesh(new THREE.BoxGeometry(3.2, 4.5, 0.3), darkMat);
+        tail.position.set(-9, 2.2, 0);
+        g.add(tail);
+        return g;
+    }
+
+    // ============================================================================
+    // 8. THÀNH PHỐ THUẬT TOÁN, NGOẠI Ô, CẦU QUA SÔNG & XE CỘ DI CHUYỂN
+    // ============================================================================
+    const trafficCars = [];
+    let carInstMesh = null;
+    let carHeadlightInst = null;
+
+    function buildCityAndSuburbs() {
+        const { diffTex, emisTex } = Textures.createBuildingTextures();
+        const cityMat = new THREE.MeshStandardMaterial({
+            map: diffTex,
+            emissive: 0xffffff,
+            emissiveMap: emisTex,
+            emissiveIntensity: 0.08,
+            roughness: 0.32,
+            metalness: 0.55
+        });
+        dynamicLightMaterials.push({ mat: cityMat, dayIntensity: 0.05, nightIntensity: 1.45 });
+
+        const cx = CONFIG.cityCenterX;
+        const cz = CONFIG.cityCenterZ;
+        const baseY = CONFIG.baseTerrainY;
+
+        // 1. Mạng lưới đường phố thành phố & Công viên trung tâm
+        const roadMat = new THREE.MeshStandardMaterial({ color: 0x1f242d, roughness: 0.88 });
+        const cityPlatform = new THREE.Mesh(new THREE.PlaneGeometry(1150, 1150), roadMat);
+        cityPlatform.rotation.x = -Math.PI / 2;
+        cityPlatform.position.set(cx, baseY + 0.04, cz);
+        cityPlatform.receiveShadow = true;
+        scene.add(cityPlatform);
+
+        // Công viên xanh giữa thành phố (Central Park)
+        const parkMat = new THREE.MeshStandardMaterial({ color: 0x2f6b36, roughness: 0.9 });
+        const parkMesh = new THREE.Mesh(new THREE.PlaneGeometry(210, 210), parkMat);
+        parkMesh.rotation.x = -Math.PI / 2;
+        parkMesh.position.set(cx, baseY + 0.1, cz);
+        scene.add(parkMesh);
+
+        // Hồ nước nhỏ trong công viên
+        const pondMesh = new THREE.Mesh(
+            new THREE.CircleGeometry(48, 24),
+            new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.15, metalness: 0.8 })
+        );
+        pondMesh.rotation.x = -Math.PI / 2;
+        pondMesh.position.set(cx, baseY + 0.16, cz);
+        scene.add(pondMesh);
+
+        // 2. Các tòa nhà cao tầng, chung cư và nhà xưởng (InstancedMesh)
+        const bldgCount = 320;
+        const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+        boxGeo.translate(0, 0.5, 0);
+        const bldgInst = new THREE.InstancedMesh(boxGeo, cityMat, bldgCount);
+        bldgInst.castShadow = true;
+        bldgInst.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        const col = new THREE.Color();
+        const palette = [0x94a3b8, 0xcbd5e1, 0x64748b, 0x7dd3fc, 0xe2e8f0, 0xfde68a];
+        let bIdx = 0;
+
+        const gridStep = 68;
+        for (let gx = -7; gx <= 7; gx++) {
+            for (let gz = -7; gz <= 7; gz++) {
+                // Chừa khoảng trống cho công viên trung tâm
+                if (Math.abs(gx) <= 1 && Math.abs(gz) <= 1) continue;
+                if (bIdx >= bldgCount) break;
+
+                const bx = cx + gx * gridStep + (Math.random() - 0.5) * 12;
+                const bz = cz + gz * gridStep + (Math.random() - 0.5) * 12;
+                const distFromCore = Math.hypot(gx, gz);
+
+                const w = 22 + Math.random() * 20;
+                const d = 22 + Math.random() * 20;
+                // Nhà cao tầng tập trung ở lõi đô thị, thấp dần ra rìa
+                const h = distFromCore < 3.5
+                    ? 65 + Math.random() * 145
+                    : (distFromCore < 5.5 ? 28 + Math.random() * 65 : 14 + Math.random() * 26);
+
+                const by = getTerrainHeight(bx, bz);
+                dummy.position.set(bx, by, bz);
+                dummy.rotation.set(0, 0, 0);
+                dummy.scale.set(w, h, d);
+                dummy.updateMatrix();
+
+                bldgInst.setMatrixAt(bIdx, dummy.matrix);
+                col.setHex(palette[Math.floor(Math.random() * palette.length)]);
+                bldgInst.setColorAt(bIdx, col);
+                bIdx++;
+
+                // Thêm hộp va chạm cho các tòa nhà cao
+                if (h > 22) {
+                    colliders.push({ x: bx, z: bz, rx: w * 0.5, rz: d * 0.5, maxY: by + h });
+                }
+            }
+        }
+        bldgInst.count = bIdx;
+        scene.add(bldgInst);
+
+        // 3. Khu ngoại ô (Suburbs): Nhà mái ngói đỏ, sân vườn & hàng rào trắng
+        const houseCount = 140;
+        const wallGeo = new THREE.BoxGeometry(10, 6, 8);
+        wallGeo.translate(0, 3, 0);
+        const wallMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.8 });
+        const houseWallInst = new THREE.InstancedMesh(wallGeo, wallMat, houseCount);
+        houseWallInst.castShadow = true;
+
+        const roofGeo = new THREE.ConeGeometry(7.8, 4.5, 4);
+        roofGeo.rotateY(Math.PI / 4);
+        roofGeo.translate(0, 8.2, 0);
+        const roofMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.7 }); // Mái ngói đỏ
+        const houseRoofInst = new THREE.InstancedMesh(roofGeo, roofMat, houseCount);
+        houseRoofInst.castShadow = true;
+
+        const fenceGeo = new THREE.BoxGeometry(14, 1.4, 0.35);
+        fenceGeo.translate(0, 0.7, 5.5);
+        const fenceMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.7 });
+        const fenceInst = new THREE.InstancedMesh(fenceGeo, fenceMat, houseCount);
+
+        let hIdx = 0;
+        for (let sx = -6; sx <= 5; sx++) {
+            for (let sz = -5; sz <= 5; sz++) {
+                if (hIdx >= houseCount) break;
+                const hx = CONFIG.suburbCenterX + sx * 46 + (Math.random() - 0.5) * 8;
+                const hz = CONFIG.suburbCenterZ + sz * 42 + (Math.random() - 0.5) * 8;
+                const hy = getTerrainHeight(hx, hz);
+                if (hy < 2.5) continue;
+
+                dummy.position.set(hx, hy, hz);
+                dummy.rotation.set(0, (Math.floor(Math.random() * 4) * Math.PI) / 2, 0);
+                dummy.scale.set(1, 1, 1);
+                dummy.updateMatrix();
+
+                houseWallInst.setMatrixAt(hIdx, dummy.matrix);
+                houseRoofInst.setMatrixAt(hIdx, dummy.matrix);
+                fenceInst.setMatrixAt(hIdx, dummy.matrix);
+                hIdx++;
+            }
+        }
+        houseWallInst.count = hIdx;
+        houseRoofInst.count = hIdx;
+        fenceInst.count = hIdx;
+        scene.add(houseWallInst);
+        scene.add(houseRoofInst);
+        scene.add(fenceInst);
+
+        // 4. Hai cây cầu dây văng bắc qua sông nối sân bay và thành phố
+        const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.45, metalness: 0.5 });
+        const cableMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+        for (let bx of [150, 650]) {
+            const rzCenter = getRiverCenterZ(bx);
+            const deck = new THREE.Mesh(new THREE.BoxGeometry(24, 2.5, 290), bridgeMat);
+            deck.position.set(bx, baseY + 6.5, rzCenter);
+            deck.castShadow = true;
+            scene.add(deck);
+
+            for (let pz of [-65, 65]) {
+                const pylon = new THREE.Mesh(new THREE.BoxGeometry(4.5, 48, 4.5), bridgeMat);
+                pylon.position.set(bx, baseY + 24, rzCenter + pz);
+                pylon.castShadow = true;
+                scene.add(pylon);
+                colliders.push({ x: bx, z: rzCenter + pz, rx: 12, rz: 6, maxY: baseY + 48 });
+
+                const lightTop = new THREE.Mesh(new THREE.SphereGeometry(1.2, 8, 8), cableMat);
+                lightTop.position.set(bx, baseY + 49, rzCenter + pz);
+                scene.add(lightTop);
+            }
+        }
+
+        // 5. Xe cộ di chuyển trên đường phố (chịu tác động khi thay đổi trọng lực!)
+        const carCount = 160;
+        const carGeo = new THREE.BoxGeometry(2.6, 1.5, 4.8);
+        const carMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.6 });
+        carInstMesh = new THREE.InstancedMesh(carGeo, carMat, carCount);
+
+        const hlGeo = new THREE.BoxGeometry(2.2, 0.5, 5.2);
+        const hlMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+        carHeadlightInst = new THREE.InstancedMesh(hlGeo, hlMat, carCount);
+
+        const carColors = [0xef4444, 0x3b82f6, 0xfacc15, 0x10b981, 0xf8fafc, 0xa855f7, 0xf97316];
+        for (let i = 0; i < carCount; i++) {
+            const alongX = i % 2 === 0;
+            const laneIndex = Math.floor(Math.random() * 13) - 6;
+            const x = cx + (alongX ? (Math.random() - 0.5) * 960 : laneIndex * gridStep + 34);
+            const z = cz + (alongX ? laneIndex * gridStep + 34 : (Math.random() - 0.5) * 960);
+            const speed = (16 + Math.random() * 18) * (Math.random() > 0.5 ? 1 : -1);
+
+            trafficCars.push({
+                x,
+                y: baseY + 0.85,
+                z,
+                vy: 0,
+                alongX,
+                speed,
+                rotX: 0,
+                rotZ: 0,
+                spinX: (Math.random() - 0.5) * 2.2,
+                spinZ: (Math.random() - 0.5) * 2.2
+            });
+            col.setHex(carColors[i % carColors.length]);
+            carInstMesh.setColorAt(i, col);
+        }
+        scene.add(carInstMesh);
+        scene.add(carHeadlightInst);
+    }
+
+    function updateTraffic(dt) {
+        if (!carInstMesh) return;
+        const dummy = new THREE.Object3D();
+        const cx = CONFIG.cityCenterX;
+        const cz = CONFIG.cityCenterZ;
+        const gMs2 = GAME.gravityG * CONFIG.gravityEarth;
+
+        for (let i = 0; i < trafficCars.length; i++) {
+            const c = trafficCars[i];
+            if (c.alongX) {
+                c.x += c.speed * dt;
+                if (c.x > cx + 490) c.x = cx - 490;
+                if (c.x < cx - 490) c.x = cx + 490;
+            } else {
+                c.z += c.speed * dt;
+                if (c.z > cz + 490) c.z = cz - 490;
+                if (c.z < cz - 490) c.z = cz + 490;
+            }
+
+            const groundY = getTerrainHeight(c.x, c.z) + 0.85;
+
+            // Khi trọng lực <= 0, xe cộ lơ lửng hoặc bị hút ngược lên trời!
+            if (GAME.gravityG <= 0.02) {
+                const upAccel = GAME.gravityG < 0 ? (-gMs2 * 0.35) : 1.2;
+                c.vy += upAccel * dt;
+                c.y += c.vy * dt;
+                if (c.y > groundY + 180) {
+                    c.y = groundY + 180;
+                    c.vy *= -0.3;
+                }
+                c.rotX += c.spinX * dt;
+                c.rotZ += c.spinZ * dt;
+            } else {
+                // Trọng lực dương: xe rơi về mặt đường
+                c.vy -= gMs2 * dt;
+                c.y += c.vy * dt;
+                if (c.y <= groundY) {
+                    c.y = groundY;
+                    c.vy = 0;
+                    c.rotX = MathUtils.lerp(c.rotX, 0, dt * 8);
+                    c.rotZ = MathUtils.lerp(c.rotZ, 0, dt * 8);
+                }
+            }
+
+            dummy.position.set(c.x, c.y, c.z);
+            const yaw = c.alongX ? (c.speed > 0 ? Math.PI / 2 : -Math.PI / 2) : (c.speed > 0 ? 0 : Math.PI);
+            dummy.rotation.set(c.rotX, yaw, c.rotZ);
+            dummy.updateMatrix();
+            carInstMesh.setMatrixAt(i, dummy.matrix);
+            carHeadlightInst.setMatrixAt(i, dummy.matrix);
+        }
+        carInstMesh.instanceMatrix.needsUpdate = true;
+        carHeadlightInst.instanceMatrix.needsUpdate = true;
+    }
+
+    // ============================================================================
+    // 9. MÔ HÌNH MÁY BAY PHẢN LỰC CHI TIẾT & ĐÈN HÀNG KHÔNG
+    // ============================================================================
+    const airplane = {
+        group: new THREE.Group(),
+        meshRoot: new THREE.Group(),
+        leftAileron: null,
+        rightAileron: null,
+        leftElevator: null,
+        rightElevator: null,
+        leftRudder: null,
+        rightRudder: null,
+        leftFlap: null,
+        rightFlap: null,
+        gearGroup: new THREE.Group(),
+        afterburnerL: null,
+        afterburnerR: null,
+        landingLight: null,
+        strobeLight: null,
+        wingtipL: new THREE.Vector3(-8.4, 0.1, -1.6),
+        wingtipR: new THREE.Vector3(8.4, 0.1, -1.6),
+
+        // Trạng thái vật lý & điều khiển
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        quat: new THREE.Quaternion(),
+        angVel: new THREE.Vector3(), // X: Pitch, Y: Yaw, Z: Roll (Local)
+        throttle: 0.0,
+        fuel: 100.0,
+        gearDown: true,
+        gearAnim: 1.0, // 1: Hạ hoàn toàn, 0: Thu hoàn toàn
+        flapsLevel: 0, // 0: 0°, 1: 15°, 2: 30°
+        braking: false,
+        onGround: true,
+        isStalling: false,
+        isCrashed: false,
+        crashTimer: 0,
+        speedMs: 0,
+        aoaDeg: 0,
+        gForce: 1.0,
+        verticalSpeed: 0,
+        headingDeg: 90,
+        pitchDeg: 0,
+        rollDeg: 0
+    };
+
+    function buildAirplaneModel() {
+        const root = airplane.meshRoot;
+        // Máy bay hướng dọc theo trục +X trong hệ tọa độ cục bộ?
+        // Quy ước chuẩn Three.js: Mũi máy bay hướng về -Z (Forward = (0, 0, -1)), cánh trải ngang trục X, trục Y hướng lên.
+        const bodyMat = new THREE.MeshStandardMaterial({
+            color: 0xe2e8f0,
+            roughness: 0.28,
+            metalness: 0.65
+        });
+        const darkMat = new THREE.MeshStandardMaterial({
+            color: 0x1e293b,
+            roughness: 0.45,
+            metalness: 0.55
+        });
+        const accentMat = new THREE.MeshStandardMaterial({
+            color: 0x0284c7,
+            roughness: 0.3,
+            metalness: 0.5
+        });
+        const glassMat = new THREE.MeshStandardMaterial({
+            color: 0x38bdf8,
+            roughness: 0.08,
+            metalness: 0.9,
+            transparent: true,
+            opacity: 0.65
+        });
+
+        // 1. Thân chính (Fuselage) và mũi khí động học (Nose Cone)
+        const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.15, 11.5, 16), bodyMat);
+        fuselage.rotation.x = Math.PI / 2;
+        fuselage.castShadow = true;
+        root.add(fuselage);
+
+        const nose = new THREE.Mesh(new THREE.ConeGeometry(0.95, 4.4, 16), darkMat);
+        nose.rotation.x = -Math.PI / 2;
+        nose.position.set(0, -0.04, -7.95);
+        nose.castShadow = true;
+        root.add(nose);
+
+        // Buồng lái kính vòm (Canopy)
+        const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.86, 16, 12), glassMat);
+        canopy.scale.set(0.88, 0.72, 2.75);
+        canopy.position.set(0, 0.68, -2.5);
+        root.add(canopy);
+
+        // Hai ống hút gió động cơ hai bên thân (Side Intakes)
+        for (let side of [-1, 1]) {
+            const intake = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.85, 6.8), bodyMat);
+            intake.position.set(side * 1.12, -0.08, 0.6);
+            intake.castShadow = true;
+            root.add(intake);
+
+            // Ống xả phản lực kép phía đuôi (Exhaust Nozzles)
+            const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.58, 1.4, 14), darkMat);
+            nozzle.rotation.x = Math.PI / 2;
+            nozzle.position.set(side * 0.62, -0.05, 6.2);
+            root.add(nozzle);
+        }
+
+        // 2. Cánh chính xuôi sau (Swept Main Wings)
+        const wingShape = new THREE.Shape();
+        wingShape.moveTo(0, -2.2);
+        wingShape.lineTo(8.4, 1.1);
+        wingShape.lineTo(8.4, 2.3);
+        wingShape.lineTo(0, 2.6);
+        wingShape.closePath();
+
+        const extrudeSettings = { depth: 0.16, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.04, bevelSegments: 2 };
+        const rightWingGeo = new THREE.ExtrudeGeometry(wingShape, extrudeSettings);
+        rightWingGeo.rotateX(Math.PI / 2);
+        const rightWing = new THREE.Mesh(rightWingGeo, bodyMat);
+        rightWing.position.set(0, 0.08, 0);
+        rightWing.castShadow = true;
+        rightWing.receiveShadow = true;
+        root.add(rightWing);
+
+        const leftWing = rightWing.clone();
+        leftWing.scale.x = -1;
+        root.add(leftWing);
+
+        // Thanh treo tên lửa / đầu cánh (Wingtip Rails)
+        for (let side of [-1, 1]) {
+            const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.2, 8), accentMat);
+            rail.rotation.x = Math.PI / 2;
+            rail.position.set(side * 8.42, 0.02, 1.55);
+            root.add(rail);
+        }
+
+        // 3. Các mặt điều khiển bay chuyển động (Ailerons, Flaps, Elevators, Rudders)
+        const ctrlGeo = new THREE.BoxGeometry(2.3, 0.08, 0.55);
+        airplane.leftAileron = new THREE.Mesh(ctrlGeo, accentMat);
+        airplane.leftAileron.position.set(-6.5, 0.0, 2.35);
+        root.add(airplane.leftAileron);
+
+        airplane.rightAileron = new THREE.Mesh(ctrlGeo, accentMat);
+        airplane.rightAileron.position.set(6.5, 0.0, 2.35);
+        root.add(airplane.rightAileron);
+
+        const flapGeo = new THREE.BoxGeometry(2.6, 0.09, 0.65);
+        airplane.leftFlap = new THREE.Mesh(flapGeo, darkMat);
+        airplane.leftFlap.position.set(-3.2, -0.02, 2.55);
+        root.add(airplane.leftFlap);
+
+        airplane.rightFlap = new THREE.Mesh(flapGeo, darkMat);
+        airplane.rightFlap.position.set(3.2, -0.02, 2.55);
+        root.add(airplane.rightFlap);
+
+        // Cánh đuôi ngang (Elevators)
+        const elevGeo = new THREE.BoxGeometry(2.8, 0.1, 1.35);
+        airplane.leftElevator = new THREE.Mesh(elevGeo, bodyMat);
+        airplane.leftElevator.position.set(-2.3, 0.0, 5.25);
+        root.add(airplane.leftElevator);
+
+        airplane.rightElevator = new THREE.Mesh(elevGeo, bodyMat);
+        airplane.rightElevator.position.set(2.3, 0.0, 5.25);
+        root.add(airplane.rightElevator);
+
+        // Cánh đuôi đứng kép nghiêng chữ V (Twin Vertical Stabilizers & Rudders)
+        for (let side of [-1, 1]) {
+            const vTail = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.65, 2.4), bodyMat);
+            vTail.position.set(side * 1.15, 1.25, 4.7);
+            vTail.rotation.z = -side * 0.22;
+            vTail.castShadow = true;
+            root.add(vTail);
+
+            const rudder = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.2, 0.55), accentMat);
+            rudder.position.set(side * 1.22, 1.22, 5.95);
+            rudder.rotation.z = -side * 0.22;
+            root.add(rudder);
+            if (side < 0) airplane.leftRudder = rudder;
+            else airplane.rightRudder = rudder;
+        }
+
+        // 4. Lửa động cơ đốt sau (Afterburner Cones)
+        const abGeo = new THREE.ConeGeometry(0.45, 3.6, 12, 1, true);
+        abGeo.rotateX(Math.PI / 2);
+        abGeo.translate(0, 0, 1.8);
+        const abMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            transparent: true,
+            opacity: 0.85,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        airplane.afterburnerL = new THREE.Mesh(abGeo, abMat);
+        airplane.afterburnerL.position.set(-0.62, -0.05, 6.8);
+        root.add(airplane.afterburnerL);
+
+        airplane.afterburnerR = new THREE.Mesh(abGeo, abMat.clone());
+        airplane.afterburnerR.position.set(0.62, -0.05, 6.8);
+        root.add(airplane.afterburnerR);
+
+        // 5. Bộ bánh đáp 3 càng có thể thu/thả (Retractable Tricycle Landing Gear)
+        const strutMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.8, roughness: 0.2 });
+        const tireMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.9 });
+        const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.26, 12);
+        wheelGeo.rotateZ(Math.PI / 2);
+
+        // Càng mũi (Nose Gear)
+        const noseStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.45, 8), strutMat);
+        noseStrut.position.set(0, -0.95, -4.5);
+        airplane.gearGroup.add(noseStrut);
+        const noseWheel = new THREE.Mesh(wheelGeo, tireMat);
+        noseWheel.position.set(0, -1.65, -4.5);
+        airplane.gearGroup.add(noseWheel);
+
+        // Hai càng chính (Main Gears)
+        for (let side of [-1, 1]) {
+            const mStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.5, 8), strutMat);
+            mStrut.position.set(side * 1.65, -0.95, 0.85);
+            airplane.gearGroup.add(mStrut);
+
+            const mWheel = new THREE.Mesh(wheelGeo, tireMat);
+            mWheel.scale.set(1.2, 1.2, 1.2);
+            mWheel.position.set(side * 1.75, -1.65, 0.85);
+            airplane.gearGroup.add(mWheel);
+        }
+        root.add(airplane.gearGroup);
+
+        // 6. Đèn hàng không (Navigation Lights: Đỏ trái, Xanh phải, Chớp trắng & Đèn pha hạ cánh)
+        const navSphere = new THREE.SphereGeometry(0.16, 8, 8);
+        const redNav = new THREE.Mesh(navSphere, new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+        redNav.position.set(-8.45, 0.05, 1.2);
+        root.add(redNav);
+
+        const greenNav = new THREE.Mesh(navSphere, new THREE.MeshBasicMaterial({ color: 0x22ff55 }));
+        greenNav.position.set(8.45, 0.05, 1.2);
+        root.add(greenNav);
+
+        airplane.strobeLight = new THREE.PointLight(0xffffff, 0, 35);
+        airplane.strobeLight.position.set(0, 2.6, 5.2);
+        root.add(airplane.strobeLight);
+
+        airplane.landingLight = new THREE.SpotLight(0xfffbeb, 0.0, 280, Math.PI / 5, 0.5, 1.2);
+        airplane.landingLight.position.set(0, -1.2, -5.2);
+        airplane.landingLight.target.position.set(0, -4.5, -65);
+        root.add(airplane.landingLight);
+        root.add(airplane.landingLight.target);
+
+        airplane.group.add(root);
+        scene.add(airplane.group);
+    }
+
+    // ============================================================================
+    // 10. HỆ THỐNG HẠT (VỆT KHÓI ĐẦU CÁNH, BỤI HẠ CÁNH, VỤ NỔ & MẢNH VỠ)
+    // ============================================================================
+    const particles = [];
+    let particleInstMesh = null;
+    const MAX_PARTICLES = 450;
+
+    function initParticleSystem() {
+        const geo = new THREE.DodecahedronGeometry(1, 0);
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.72
+        });
+        particleInstMesh = new THREE.InstancedMesh(geo, mat, MAX_PARTICLES);
+        particleInstMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        scene.add(particleInstMesh);
+
+        const col = new THREE.Color(0xffffff);
+        for (let i = 0; i < MAX_PARTICLES; i++) {
+            particleInstMesh.setColorAt(i, col);
+        }
+    }
+
+    function spawnParticle(pos, vel, scale, life, colorHex, affectedByGravity = true) {
+        if (particles.length >= MAX_PARTICLES) particles.shift();
+        particles.push({
+            pos: pos.clone(),
+            vel: vel.clone(),
+            scale,
+            maxScale: scale * 2.4,
+            life,
+            maxLife: life,
+            color: new THREE.Color(colorHex),
+            affectedByGravity
+        });
+    }
+
+    function triggerCrashExplosion(pos) {
+        sound.playExplosion();
+        const fireColors = [0xff4500, 0xff8c00, 0xfacc15, 0xef4444, 0x334155, 0x1e293b];
+        for (let i = 0; i < 95; i++) {
+            const v = new THREE.Vector3(
+                (Math.random() - 0.5) * 48,
+                Math.random() * 36 + 6,
+                (Math.random() - 0.5) * 48
+            );
+            const c = fireColors[Math.floor(Math.random() * fireColors.length)];
+            spawnParticle(pos, v, 1.5 + Math.random() * 3.2, 1.4 + Math.random() * 1.8, c, true);
+        }
+    }
+
+    function updateParticles(dt) {
+        if (!particleInstMesh) return;
+        const dummy = new THREE.Object3D();
+        const gAccel = GAME.gravityG * CONFIG.gravityEarth;
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            p.life -= dt;
+            if (p.life <= 0) {
+                particles.splice(i, 1);
+                continue;
+            }
+            if (p.affectedByGravity) {
+                // Khói và mảnh vỡ chịu ảnh hưởng trực tiếp bởi trọng lực hiện tại!
+                p.vel.y -= gAccel * 0.35 * dt;
+            } else {
+                // Vệt khói hơi nước nở nhẹ và chịu lực nổi ngược chiều trọng lực
+                p.vel.y += gAccel * 0.08 * dt;
+            }
+            p.pos.addScaledVector(p.vel, dt);
+
+            const groundY = getTerrainHeight(p.pos.x, p.pos.z) + 0.5;
+            if (p.pos.y < groundY) {
+                p.pos.y = groundY;
+                p.vel.y *= -0.35;
+                p.vel.x *= 0.7;
+                p.vel.z *= 0.7;
+            }
+        }
+
+        for (let i = 0; i < MAX_PARTICLES; i++) {
+            if (i < particles.length) {
+                const p = particles[i];
+                const progress = 1.0 - p.life / p.maxLife;
+                const s = MathUtils.lerp(p.scale, p.maxScale, progress) * (1.0 - progress * 0.65);
+                dummy.position.copy(p.pos);
+                dummy.scale.set(s, s, s);
+                dummy.rotation.set(progress * 3, progress * 2, 0);
+                dummy.updateMatrix();
+                particleInstMesh.setMatrixAt(i, dummy.matrix);
+                particleInstMesh.setColorAt(i, p.color);
+            } else {
+                dummy.position.set(0, -9999, 0);
+                dummy.scale.set(0.001, 0.001, 0.001);
+                dummy.updateMatrix();
+                particleInstMesh.setMatrixAt(i, dummy.matrix);
+            }
+        }
+        particleInstMesh.instanceMatrix.needsUpdate = true;
+        if (particleInstMesh.instanceColor) particleInstMesh.instanceColor.needsUpdate = true;
+    }
+
+    // ============================================================================
+    // 11. ĐIỀU KHIỂN BÀN PHÍM, CHUỘT & JOYSTICK CẢM ỨNG
+    // ============================================================================
+    const keys = {};
+    const touchInput = { pitch: 0, roll: 0, thrUp: false, thrDown: false, active: false };
+    let isDraggingOrbit = false;
+    let prevMouseX = 0, prevMouseY = 0;
+
+    function showHudAlert(text, type = 'danger', duration = 2.0) {
+        const el = document.getElementById('hud-alert');
+        el.textContent = text;
+        el.className = type;
+        el.style.opacity = '1';
+        GAME.alertTimer = duration;
+    }
+
+    function setGravityTarget(gVal) {
+        GAME.targetGravityG = MathUtils.clamp(parseFloat(gVal), -1.0, 3.0);
+        const slider = document.getElementById('gravity-slider');
+        slider.value = GAME.targetGravityG;
+
+        // Cập nhật trạng thái nút preset
+        document.querySelectorAll('.grav-btn').forEach(btn => {
+            const bg = parseFloat(btn.getAttribute('data-g'));
+            btn.classList.toggle('active', Math.abs(bg - GAME.targetGravityG) < 0.02);
+        });
+
+        // Hiệu ứng sóng chuyển cảnh trọng lực mượt
+        const wave = document.getElementById('gravity-wave-fx');
+        wave.style.opacity = '1';
+        setTimeout(() => { wave.style.opacity = '0'; }, 420);
+        sound.playGravityShift();
+    }
+
+    function respawnPlane(inAir = false) {
+        airplane.isCrashed = false;
+        airplane.isStalling = false;
+        airplane.meshRoot.visible = true;
+        airplane.fuel = 100.0;
+        airplane.angVel.set(0, 0, 0);
+
+        // Đặt máy bay hướng dọc theo đường băng 09 (hướng +X: Yaw = -PI/2 vì mặc định mũi là -Z)
+        const euler = new THREE.Euler(0, -Math.PI / 2, 0, 'YXZ');
+        airplane.quat.setFromEuler(euler);
+
+        if (inAir) {
+            airplane.pos.set(CONFIG.runwayX - 950, CONFIG.baseTerrainY + 210, CONFIG.runwayZ);
+            airplane.vel.set(78, 0, 0); // Đang bay ~150 knots hướng về đường băng
+            airplane.throttle = 0.68;
+            airplane.gearDown = false;
+            airplane.gearAnim = 0.0;
+            airplane.flapsLevel = 0;
+            airplane.onGround = false;
+            showHudAlert('ĐANG BAY TRÊN KHÔNG - CHUẨN BỊ TIẾP CẬN', 'info', 2.2);
+        } else {
+            // Đậu ở đầu đường băng 09 sẵn sàng cất cánh
+            airplane.pos.set(CONFIG.runwayX - CONFIG.runwayLength / 2 + 125, CONFIG.baseTerrainY + 1.82, CONFIG.runwayZ);
+            airplane.vel.set(0, 0, 0);
+            airplane.throttle = 0.0;
+            airplane.gearDown = true;
+            airplane.gearAnim = 1.0;
+            airplane.flapsLevel = 1; // Flaps 15° hỗ trợ cất cánh
+            airplane.onGround = true;
+            showHudAlert('SẴN SÀNG CẤT CÁNH TẠI ĐƯỜNG BĂNG 09', 'info', 2.2);
+        }
+
+        airplane.group.position.copy(airplane.pos);
+        airplane.group.quaternion.copy(airplane.quat);
+    }
+
+    function setupControls() {
+        window.addEventListener('keydown', (e) => {
+            const code = e.code;
+            keys[code] = true;
+
+            if (code === 'KeyG' && !e.repeat) {
+                airplane.gearDown = !airplane.gearDown;
+                showHudAlert(airplane.gearDown ? 'BÁNH ĐÁP: ĐANG HẠ (GEAR DOWN)' : 'BÁNH ĐÁP: ĐANG THU (GEAR UP)', 'info', 1.4);
+            } else if (code === 'KeyF' && !e.repeat) {
+                airplane.flapsLevel = (airplane.flapsLevel + 1) % 3;
+                const degs = [0, 15, 30][airplane.flapsLevel];
+                showHudAlert(`CÁNH TÀ (FLAPS): ${degs}°`, 'info', 1.3);
+            } else if (code === 'KeyC' && !e.repeat) {
+                cycleCameraMode();
+            } else if (code === 'KeyN' && !e.repeat) {
+                cycleTimeOfDay();
+            } else if (code === 'KeyM' && !e.repeat) {
+                toggleMouseSteer();
+            } else if (code === 'BracketLeft') {
+                setGravityTarget(GAME.targetGravityG - 0.15);
+            } else if (code === 'BracketRight') {
+                setGravityTarget(GAME.targetGravityG + 0.15);
+            } else if (code === 'KeyR' && !e.repeat) {
+                respawnPlane(false);
+            } else if (code === 'KeyB' && !e.repeat) {
+                respawnPlane(true);
+            } else if ((code === 'KeyP' || code === 'Escape') && !e.repeat) {
+                togglePauseMenu();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+
+        // Điều khiển chuột (Lái máy bay hoặc Xoay camera ngoài)
+        window.addEventListener('mousemove', (e) => {
+            GAME.mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+            GAME.mouseY = (e.clientY / window.innerHeight) * 2 - 1;
+
+            if (isDraggingOrbit && GAME.cameraMode === 2) {
+                GAME.orbitAngleX -= (e.clientX - prevMouseX) * 0.007;
+                GAME.orbitAngleY = MathUtils.clamp(GAME.orbitAngleY + (e.clientY - prevMouseY) * 0.006, -0.35, 1.35);
+                prevMouseX = e.clientX;
+                prevMouseY = e.clientY;
+            }
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.hud-interactive') || e.target.closest('#modal-overlay')) return;
+            if (GAME.cameraMode === 2) {
+                isDraggingOrbit = true;
+                prevMouseX = e.clientX;
+                prevMouseY = e.clientY;
+            }
+        });
+        window.addEventListener('mouseup', () => { isDraggingOrbit = false; });
+
+        // Điều khiển cảm ứng (Virtual Joystick) cho điện thoại
+        const joyZone = document.getElementById('joystick-zone');
+        const joyKnob = document.getElementById('joystick-knob');
+        let joyCenter = { x: 0, y: 0 };
+
+        joyZone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const rect = joyZone.getBoundingClientRect();
+            joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            touchInput.active = true;
+            handleJoystickMove(e.touches[0]);
+        }, { passive: false });
+
+        joyZone.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (touchInput.active) handleJoystickMove(e.touches[0]);
+        }, { passive: false });
+
+        const resetJoy = () => {
+            touchInput.active = false;
+            touchInput.pitch = 0;
+            touchInput.roll = 0;
+            joyKnob.style.transform = `translate(0px, 0px)`;
+        };
+        joyZone.addEventListener('touchend', resetJoy);
+        joyZone.addEventListener('touchcancel', resetJoy);
+
+        function handleJoystickMove(touch) {
+            const maxR = 46;
+            let dx = touch.clientX - joyCenter.x;
+            let dy = touch.clientY - joyCenter.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > maxR) {
+                dx = (dx / dist) * maxR;
+                dy = (dy / dist) * maxR;
+            }
+            joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+            touchInput.roll = dx / maxR;
+            touchInput.pitch = dy / maxR;
+        }
+
+        // Các nút cảm ứng bên phải
+        const bindTouchHold = (id, prop) => {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); touchInput[prop] = true; });
+            btn.addEventListener('touchend', () => { touchInput[prop] = false; });
+        };
+        bindTouchHold('touch-thr-up', 'thrUp');
+        bindTouchHold('touch-thr-down', 'thrDown');
+        document.getElementById('touch-gear').addEventListener('click', () => { airplane.gearDown = !airplane.gearDown; });
+        document.getElementById('touch-flaps').addEventListener('click', () => { airplane.flapsLevel = (airplane.flapsLevel + 1) % 3; });
+        const brakeBtn = document.getElementById('touch-brake');
+        brakeBtn.addEventListener('touchstart', (e) => { e.preventDefault(); keys['Space'] = true; });
+        brakeBtn.addEventListener('touchend', () => { keys['Space'] = false; });
+    }
+
+    // ============================================================================
+    // 12. VẬT LÝ KHÍ ĐỘNG HỌC BÁN THỰC TẾ & XỬ LÝ VA CHẠM
+    // ============================================================================
+    function updateFlightPhysics(dt) {
+        // Nội suy trọng lực mượt
+        GAME.gravityG = MathUtils.lerp(GAME.gravityG, GAME.targetGravityG, Math.min(1, dt * 5.5));
+        const gNames = {
+            '-1': 'Đảo Ngược',
+            '0': 'Không Trọng Lực',
+            '0.16': 'Mặt Trăng',
+            '0.38': 'Sao Hỏa',
+            '1': 'Trái Đất',
+            '3': 'Siêu Nặng'
+        };
+        let presetLabel = 'Tùy chỉnh';
+        for (let k in gNames) {
+            if (Math.abs(parseFloat(k) - GAME.gravityG) < 0.05) presetLabel = gNames[k];
+        }
+        document.getElementById('gravity-readout').textContent = `${GAME.gravityG.toFixed(2)} g (${presetLabel})`;
+
+        // Nếu máy bay đã nổ, đếm ngược hồi sinh
+        if (airplane.isCrashed) {
+            airplane.crashTimer -= dt;
+            if (airplane.crashTimer <= 0) {
+                respawnPlane(false);
+            }
+            return;
+        }
+
+        // 1. Đọc tín hiệu điều khiển Pitch / Roll / Yaw / Ga / Phanh
+        let pitchCmd = 0; // +1: Ngóc mũi (Pitch Up), -1: Chúc mũi (Pitch Down)
+        let rollCmd = 0;  // +1: Nghiêng trái, -1: Nghiêng phải
+        let yawCmd = 0;   // +1: Lái trái, -1: Lái phải
+
+        if (keys['KeyS'] || keys['ArrowDown']) pitchCmd += 1;
+        if (keys['KeyW'] || keys['ArrowUp']) pitchCmd -= 1;
+        if (keys['KeyA'] || keys['ArrowLeft']) rollCmd += 1;
+        if (keys['KeyD'] || keys['ArrowRight']) rollCmd -= 1;
+        if (keys['KeyQ']) yawCmd += 1;
+        if (keys['KeyE']) yawCmd -= 1;
+
+        if (GAME.mouseSteer) {
+            rollCmd = MathUtils.clamp(-GAME.mouseX * 1.4, -1, 1);
+            pitchCmd = MathUtils.clamp(GAME.mouseY * 1.4, -1, 1);
+        }
+        if (touchInput.active) {
+            rollCmd = -touchInput.roll;
+            pitchCmd = touchInput.pitch;
+        }
+
+        // Điều chỉnh tay ga (Shift / Ctrl) & tiêu hao nhiên liệu
+        if (keys['ShiftLeft'] || keys['ShiftRight'] || touchInput.thrUp) {
+            airplane.throttle = MathUtils.clamp(airplane.throttle + dt * 0.48, 0, 1);
+        }
+        if (keys['ControlLeft'] || keys['ControlRight'] || touchInput.thrDown) {
+            airplane.throttle = MathUtils.clamp(airplane.throttle - dt * 0.48, 0, 1);
+        }
+        if (airplane.fuel <= 0) {
+            airplane.fuel = 0;
+            airplane.throttle = 0;
+        } else {
+            // Tiêu thụ nhiên liệu tỉ lệ với mức ga (tiếp nhiên liệu tự động khi đỗ trên đường băng)
+            const fuelRate = airplane.throttle > 0.85 ? 0.65 : 0.22 * airplane.throttle;
+            airplane.fuel = MathUtils.clamp(airplane.fuel - fuelRate * dt, 0, 100);
+        }
+
+        airplane.braking = !!keys['Space'];
+
+        // Hoạt ảnh thu/thả bánh đáp mượt
+        const targetGear = airplane.gearDown ? 1.0 : 0.0;
+        airplane.gearAnim = MathUtils.lerp(airplane.gearAnim, targetGear, dt * 3.2);
+        airplane.gearGroup.scale.y = Math.max(0.01, airplane.gearAnim);
+        airplane.gearGroup.visible = airplane.gearAnim > 0.05;
+
+        // Hoạt ảnh các mặt điều khiển bay (Ailerons, Elevators, Rudders, Flaps)
+        const flapAngle = [0, 0.28, 0.54][airplane.flapsLevel];
+        airplane.leftAileron.rotation.x = rollCmd * 0.38;
+        airplane.rightAileron.rotation.x = -rollCmd * 0.38;
+        airplane.leftElevator.rotation.x = -pitchCmd * 0.36;
+        airplane.rightElevator.rotation.x = -pitchCmd * 0.36;
+        airplane.leftRudder.rotation.y = yawCmd * 0.42;
+        airplane.rightRudder.rotation.y = yawCmd * 0.42;
+        airplane.leftFlap.rotation.x = flapAngle;
+        airplane.rightFlap.rotation.x = flapAngle;
+
+        // Hiệu ứng lửa động cơ đốt sau (Afterburner)
+        const abScale = airplane.throttle > 0.1 ? (0.3 + airplane.throttle * 1.15 + Math.sin(performance.now() * 0.06) * 0.12) : 0.001;
+        airplane.afterburnerL.scale.set(1, 1, abScale);
+        airplane.afterburnerR.scale.set(1, 1, abScale);
+        airplane.afterburnerL.visible = airplane.throttle > 0.08;
+        airplane.afterburnerR.visible = airplane.throttle > 0.08;
+        const abColor = airplane.throttle > 0.85 ? 0xf97316 : 0x38bdf8;
+        airplane.afterburnerL.material.color.setHex(abColor);
+        airplane.afterburnerR.material.color.setHex(abColor);
+
+        // 2. Các vector trục cục bộ của máy bay trong không gian thế giới
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(airplane.quat).normalize();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(airplane.quat).normalize();
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(airplane.quat).normalize();
+
+        const speed = airplane.vel.length();
+        airplane.speedMs = speed;
+
+        // Vận tốc trong hệ quy chiếu cục bộ của máy bay
+        const invQuat = airplane.quat.clone().invert();
+        const localVel = airplane.vel.clone().applyQuaternion(invQuat);
+        const forwardSpeed = Math.max(0, -localVel.z);
+
+        // Tính Góc tấn (Angle of Attack - AoA)
+        let aoaRad = 0;
+        if (speed > 4.0) {
+            aoaRad = Math.atan2(-localVel.y, Math.max(1.0, -localVel.z));
+        }
+        const aoaDeg = THREE.MathUtils.radToDeg(aoaRad);
+        airplane.aoaDeg = aoaDeg;
+
+        // 3. Mô hình Khí động học: Lực nâng (Lift), Lực cản (Drag), Lực đẩy (Thrust), Trọng lực (Weight)
+        const flapLiftBonus = [0, 0.26, 0.48][airplane.flapsLevel];
+        const flapDragBonus = [0, 0.022, 0.058][airplane.flapsLevel];
+        const gearDragBonus = airplane.gearAnim * 0.032;
+        const brakeDragBonus = airplane.braking ? 0.095 : 0.0;
+
+        // Kiểm tra hiện tượng Thất tốc (Stall) khi góc tấn quá lớn (> 16.5°) hoặc bay quá chậm trên không
+        const criticalAoA = 16.5 + airplane.flapsLevel * 1.5;
+        let cl = 0;
+        airplane.isStalling = false;
+
+        if (Math.abs(aoaDeg) < criticalAoA) {
+            // Vùng tuyến tính: Hệ số lực nâng tăng theo góc tấn + độ camber cánh + Flaps
+            cl = (aoaDeg + 2.4) * 0.095 + flapLiftBonus;
+        } else {
+            // Vùng thất tốc (Stall): Lực nâng sụt giảm mạnh!
+            const excess = Math.abs(aoaDeg) - criticalAoA;
+            const sign = Math.sign(aoaDeg + 2.4);
+            cl = sign * Math.max(0.12, (criticalAoA + 2.4) * 0.095 + flapLiftBonus - excess * 0.085);
+            if (!airplane.onGround && speed > 18) {
+                airplane.isStalling = true;
+            }
+        }
+        if (!airplane.onGround && speed < 36 && GAME.gravityG > 0.25 && airplane.pos.y > CONFIG.baseTerrainY + 12) {
+            airplane.isStalling = true;
+        }
+
+        // Áp suất động lực học q = 0.5 * rho * v^2 * S / mass
+        const aeroFactor = 0.0044;
+        const liftAccelMag = aeroFactor * forwardSpeed * forwardSpeed * cl;
+        const liftAccel = up.clone().multiplyScalar(liftAccelMag);
+
+        // Lực cản (Parasitic + Induced + Flaps + Gear + Airbrake)
+        const cd = 0.021 + cl * cl * 0.055 + flapDragBonus + gearDragBonus + brakeDragBonus;
+        const dragAccelMag = aeroFactor * speed * speed * cd;
+        const dragAccel = speed > 0.01
+            ? airplane.vel.clone().normalize().multiplyScalar(-dragAccelMag)
+            : new THREE.Vector3();
+
+        // Lực cản trượt ngang thân (Sideslip Damping giúp máy bay bay thẳng theo hướng mũi)
+        const sideVel = localVel.x;
+        const sideForce = right.clone().multiplyScalar(-sideVel * Math.min(4.5, 0.4 + forwardSpeed * 0.04));
+
+        // Lực đẩy động cơ phản lực (Thrust + Afterburner)
+        const maxThrustAccel = airplane.throttle > 0.85 ? 25.5 : 18.5;
+        const thrustAccel = forward.clone().multiplyScalar(airplane.throttle * maxThrustAccel);
+
+        // Trọng lực biến thiên theo thanh trượt HUD (-1g đến 3g)
+        const gravityAccel = new THREE.Vector3(0, -GAME.gravityG * CONFIG.gravityEarth, 0);
+
+        // Tổng hợp gia tốc
+        const totalAccel = new THREE.Vector3()
+            .add(thrustAccel)
+            .add(liftAccel)
+            .add(dragAccel)
+            .add(sideForce)
+            .add(gravityAccel);
+
+        airplane.vel.addScaledVector(totalAccel, dt);
+
+        // Tính chỉ số G-Force cảm nhận bởi phi công
+        const nonGravAccel = totalAccel.clone().sub(gravityAccel);
+        airplane.gForce = nonGravAccel.dot(up) / CONFIG.gravityEarth;
+
+        // 4. Vận tốc góc (Pitch, Roll, Yaw) và Độ ổn định khí động học
+        const ctrlAuthority = MathUtils.clamp(0.28 + forwardSpeed / 65, 0.28, 1.35);
+        let targetPitchRate = pitchCmd * 1.45 * ctrlAuthority;
+        let targetRollRate = rollCmd * 2.55 * ctrlAuthority;
+        let targetYawRate = yawCmd * 0.85 * ctrlAuthority;
+
+        // Khi thất tốc (Stall), mũi máy bay tự động chúc xuống và cánh rung lắc
+        if (airplane.isStalling) {
+            targetPitchRate -= 0.95;
+            targetRollRate += Math.sin(performance.now() * 0.025) * 0.85;
+            showHudAlert('⚠️ STALL - THẤT TỐC! HẠ MŨI & TĂNG GA!', 'danger', 0.25);
+        }
+
+        // Lái bánh mũi khi đang chạy trên mặt đất
+        if (airplane.onGround) {
+            targetYawRate = (yawCmd - rollCmd * 0.45) * MathUtils.clamp(forwardSpeed / 22, 0.15, 1.1);
+            targetRollRate *= 0.25;
+        }
+
+        airplane.angVel.x = MathUtils.lerp(airplane.angVel.x, targetPitchRate, dt * 6.5);
+        airplane.angVel.y = MathUtils.lerp(airplane.angVel.y, targetYawRate, dt * 5.5);
+        airplane.angVel.z = MathUtils.lerp(airplane.angVel.z, targetRollRate, dt * 7.5);
+
+        const dq = new THREE.Quaternion();
+        const rotEuler = new THREE.Euler(
+            airplane.angVel.x * dt,
+            airplane.angVel.y * dt,
+            airplane.angVel.z * dt,
+            'YXZ'
+        );
+        dq.setFromEuler(rotEuler);
+        airplane.quat.multiply(dq).normalize();
+
+        // Cập nhật vị trí máy bay
+        airplane.pos.addScaledVector(airplane.vel, dt);
+        airplane.verticalSpeed = airplane.vel.y;
+
+        // 5. Tính toán góc Pitch, Roll, Heading cho HUD
+        const forwardFlat = new THREE.Vector3(forward.x, 0, forward.z);
+        if (forwardFlat.lengthSq() > 0.0001) forwardFlat.normalize();
+        // Bắc = -Z (0°), Đông = +X (90°), Nam = +Z (180°), Tây = -X (270°)
+        let hdg = THREE.MathUtils.radToDeg(Math.atan2(forward.x, -forward.z));
+        if (hdg < 0) hdg += 360;
+        airplane.headingDeg = hdg;
+        airplane.pitchDeg = THREE.MathUtils.radToDeg(Math.asin(MathUtils.clamp(forward.y, -1, 1)));
+
+        const worldUp = new THREE.Vector3(0, 1, 0);
+        const rightFlat = new THREE.Vector3().crossVectors(forward, worldUp).normalize();
+        const upProj = new THREE.Vector3().crossVectors(rightFlat, forward).normalize();
+        airplane.rollDeg = THREE.MathUtils.radToDeg(Math.atan2(right.dot(worldUp), up.dot(upProj)));
+
+        // 6. Kiểm tra tiếp đất (Touchdown), lăn bánh trên đường băng & va chạm địa hình
+        const groundHeight = getTerrainHeight(airplane.pos.x, airplane.pos.z);
+        const gearOffset = airplane.gearDown ? 1.78 : 0.92;
+        const minPlaneY = groundHeight + gearOffset;
+
+        const onRunwayArea =
+            Math.abs(airplane.pos.x - CONFIG.runwayX) <= CONFIG.runwayLength * 0.52 &&
+            Math.abs(airplane.pos.z - CONFIG.runwayZ) <= CONFIG.runwayWidth * 0.65;
+
+        if (airplane.pos.y <= minPlaneY) {
+            // Chạm mặt nước -> Nổ
+            if (groundHeight < CONFIG.waterLevel + 0.3) {
+                crashPlane('💥 RƠI XUỐNG MẶT NƯỚC! ĐANG HỒI SINH...');
+                return;
+            }
+
+            // Kiểm tra điều kiện hạ cánh an toàn khi từ trên không chạm đất
+            if (!airplane.onGround) {
+                const impactVS = Math.abs(airplane.vel.y);
+                const excessiveRoll = Math.abs(airplane.rollDeg) > 26;
+                const excessivePitch = airplane.pitchDeg < -18 || airplane.pitchDeg > 28;
+                const noGearCrash = !airplane.gearDown && speed > 28;
+
+                if (impactVS > 11.5 || excessiveRoll || excessivePitch || noGearCrash) {
+                    const reason = !airplane.gearDown
+                        ? '💥 QUÊN HẠ BÁNH ĐÁP (PHÍM G) KHI HẠ CÁNH!'
+                        : `💥 HẠ CÁNH QUÁ MẠNH (${impactVS.toFixed(1)} m/s)!`;
+                    crashPlane(reason);
+                    return;
+                }
+
+                // Hạ cánh thành công! Sinh khói lốp & âm thanh chạm đường băng
+                sound.playTouchdown();
+                for (let i = 0; i < 16; i++) {
+                    spawnParticle(
+                        new THREE.Vector3(airplane.pos.x, groundHeight + 0.4, airplane.pos.z),
+                        new THREE.Vector3((Math.random() - 0.5) * 8, Math.random() * 3, (Math.random() - 0.5) * 8),
+                        0.9,
+                        0.9,
+                        0xe2e8f0,
+                        false
+                    );
+                }
+                if (onRunwayArea && speed > 20) {
+                    showHudAlert('🛬 CHẠM ĐƯỜNG BĂNG AN TOÀN! GIỮ SPACE ĐỂ PHANH', 'info', 2.5);
+                }
+                airplane.onGround = true;
+            }
+
+            airplane.pos.y = minPlaneY;
+            if (airplane.vel.y < 0) airplane.vel.y = 0;
+
+            // Ma sát lăn bánh và phanh trên đường băng
+            const friction = airplane.braking ? 0.92 : (onRunwayArea ? 0.08 : 0.45);
+            const speedDrop = Math.max(0, speed - friction * 14 * dt);
+            if (speed > 0.01) {
+                // Giữ vận tốc hướng dọc theo mũi máy bay khi chạy trên đường băng
+                const groundForward = new THREE.Vector3(forward.x, 0, forward.z).normalize();
+                airplane.vel.copy(groundForward).multiplyScalar(speedDrop);
+            }
+
+            // Cân bằng lại góc nghiêng cánh và chúc mũi khi trên mặt đất
+            const currentEuler = new THREE.Euler().setFromQuaternion(airplane.quat, 'YXZ');
+            currentEuler.z = MathUtils.lerp(currentEuler.z, 0, dt * 8);
+            if (currentEuler.x < 0) currentEuler.x = MathUtils.lerp(currentEuler.x, 0, dt * 8);
+            currentEuler.x = MathUtils.clamp(currentEuler.x, -0.05, 0.26);
+            airplane.quat.setFromEuler(currentEuler);
+
+            // Tiếp nhiên liệu tự động khi dừng trên đường băng
+            if (onRunwayArea && speed < 5) {
+                airplane.fuel = MathUtils.clamp(airplane.fuel + dt * 15, 0, 100);
+            }
+        } else {
+            airplane.onGround = false;
+        }
+
+        // 7. Kiểm tra va chạm với Tòa nhà cao tầng, Tháp kiểm soát, Cầu...
+        for (let i = 0; i < colliders.length; i++) {
+            const c = colliders[i];
+            if (
+                Math.abs(airplane.pos.x - c.x) < c.rx + 4.5 &&
+                Math.abs(airplane.pos.z - c.z) < c.rz + 4.5 &&
+                airplane.pos.y < c.maxY + 1.5
+            ) {
+                crashPlane('💥 VA CHẠM CÔNG TRÌNH! ĐANG HỒI SINH...');
+                return;
+            }
+        }
+
+        // 8. Hiệu ứng vệt khói đầu cánh (Wingtip Vortices) & Bụi mặt đất khi bay thấp
+        if (speed > 48 && (Math.abs(aoaDeg) > 5.5 || Math.abs(airplane.gForce) > 1.45 || speed > 85)) {
+            const worldTipL = airplane.wingtipL.clone().applyQuaternion(airplane.quat).add(airplane.pos);
+            const worldTipR = airplane.wingtipR.clone().applyQuaternion(airplane.quat).add(airplane.pos);
+            const smokeVel = airplane.vel.clone().multiplyScalar(0.12);
+            spawnParticle(worldTipL, smokeVel, 0.42, 0.55, 0xf8fafc, false);
+            spawnParticle(worldTipR, smokeVel, 0.42, 0.55, 0xf8fafc, false);
+        }
+
+        const agl = airplane.pos.y - groundHeight;
+        if (agl < 14 && speed > 32 && groundHeight > CONFIG.waterLevel + 0.5) {
+            spawnParticle(
+                new THREE.Vector3(airplane.pos.x + (Math.random() - 0.5) * 6, groundHeight + 0.5, airplane.pos.z + (Math.random() - 0.5) * 6),
+                new THREE.Vector3((Math.random() - 0.5) * 10, 2 + Math.random() * 4, (Math.random() - 0.5) * 10),
+                1.1,
+                0.7,
+                onRunwayArea ? 0xcbd5e1 : 0xa8a29e,
+                true
+            );
+        }
+
+        airplane.group.position.copy(airplane.pos);
+        airplane.group.quaternion.copy(airplane.quat);
+    }
+
+    function crashPlane(message) {
+        airplane.isCrashed = true;
+        airplane.crashTimer = 3.0;
+        airplane.meshRoot.visible = false;
+        airplane.vel.set(0, 0, 0);
+        triggerCrashExplosion(airplane.pos);
+        showHudAlert(message, 'danger', 3.0);
+    }
+
+    // ============================================================================
+    // 13. HỆ THỐNG CAMERA (SAU LƯNG, BUỒNG LÁI, NGOÀI) & RUNG CAMERA TỐC ĐỘ CAO
+    // ============================================================================
+    const camSmoothPos = new THREE.Vector3();
+    const camSmoothLook = new THREE.Vector3();
+    let camInitialized = false;
+
+    function updateCamera(dt) {
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(airplane.quat).normalize();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(airplane.quat).normalize();
+
+        // Độ rung camera khi bay tốc độ cao, đốt sau (Afterburner) hoặc thất tốc (Stall)
+        let shakeIntensity = 0;
+        if (!airplane.isCrashed) {
+            if (airplane.speedMs > 85) shakeIntensity += ((airplane.speedMs - 85) / 140) * 0.14;
+            if (airplane.throttle > 0.85) shakeIntensity += 0.08;
+            if (airplane.isStalling) shakeIntensity += 0.18;
+        }
+        const shakeVec = new THREE.Vector3(
+            (Math.random() - 0.5) * shakeIntensity,
+            (Math.random() - 0.5) * shakeIntensity,
+            (Math.random() - 0.5) * shakeIntensity
+        );
+
+        if (GAME.cameraMode === 0) {
+            // 0: Camera Sau lưng (Chase Camera)
+            airplane.meshRoot.visible = !airplane.isCrashed;
+            const desiredPos = airplane.pos.clone()
+                .addScaledVector(forward, -21.5)
+                .addScaledVector(up, 5.4);
+
+            const minCamY = getTerrainHeight(desiredPos.x, desiredPos.z) + 1.5;
+            if (desiredPos.y < minCamY) desiredPos.y = minCamY;
+
+            const desiredLook = airplane.pos.clone().addScaledVector(forward, 18.0).addScaledVector(up, 1.2);
+
+            if (!camInitialized) {
+                camSmoothPos.copy(desiredPos);
+                camSmoothLook.copy(desiredLook);
+                camInitialized = true;
+            } else {
+                camSmoothPos.lerp(desiredPos, Math.min(1, dt * 10.5));
+                camSmoothLook.lerp(desiredLook, Math.min(1, dt * 14.0));
+            }
+
+            camera.position.copy(camSmoothPos).add(shakeVec);
+            camera.up.set(0, 1, 0);
+            camera.lookAt(camSmoothLook);
+            camera.fov = MathUtils.lerp(camera.fov, 60 + MathUtils.clamp((airplane.speedMs - 50) * 0.15, 0, 18), dt * 5);
+            camera.updateProjectionMatrix();
+
+        } else if (GAME.cameraMode === 1) {
+            // 1: Camera Buồng lái (Cockpit First-Person View)
+            const cockpitPos = airplane.pos.clone()
+                .addScaledVector(forward, 2.25)
+                .addScaledVector(up, 0.92)
+                .add(shakeVec.multiplyScalar(0.5));
+            camera.position.copy(cockpitPos);
+            camera.up.copy(up);
+            camera.lookAt(cockpitPos.clone().addScaledVector(forward, 50));
+            camera.fov = 66;
+            camera.updateProjectionMatrix();
+
+        } else {
+            // 2: Camera Ngoài / Điện ảnh xoay quanh máy bay (Orbit View)
+            const dist = 26;
+            const ox = Math.cos(GAME.orbitAngleY) * Math.sin(GAME.orbitAngleX) * dist;
+            const oy = Math.sin(GAME.orbitAngleY) * dist;
+            const oz = Math.cos(GAME.orbitAngleY) * Math.cos(GAME.orbitAngleX) * dist;
+            const desiredPos = airplane.pos.clone().add(new THREE.Vector3(ox, oy, oz));
+            const minCamY = getTerrainHeight(desiredPos.x, desiredPos.z) + 1.5;
+            if (desiredPos.y < minCamY) desiredPos.y = minCamY;
+
+            camera.position.copy(desiredPos).add(shakeVec);
+            camera.up.set(0, 1, 0);
+            camera.lookAt(airplane.pos);
+            camera.fov = 55;
+            camera.updateProjectionMatrix();
+        }
+
+        // Cập nhật vùng đổ bóng mặt trời đi theo máy bay để bóng luôn sắc nét
+        sunLight.position.copy(airplane.pos).addScaledVector(sunDir, 900);
+        sunLight.target.position.copy(airplane.pos);
+        skyDome.position.copy(camera.position);
+    }
+
+    // ============================================================================
+    // 14. CHU KỲ NGÀY/ĐÊM, ĐÈN PAPI, CỘT GIÓ & HIỆU ỨNG LENS FLARE MẶT TRỜI
+    // ============================================================================
+    const lensCanvas = document.getElementById('lens-flare-canvas');
+    const lensCtx = lensCanvas.getContext('2d');
+
+    function updateEnvironmentAndLights(dt, elapsed) {
+        waterUniforms.uTime.value = elapsed;
+
+        // Xoay đèn hải đăng trên đỉnh tháp kiểm soát không lưu
+        if (beaconHead) beaconHead.rotation.y = elapsed * 2.4;
+
+        // Cột gió bay phấp phới & phản ứng theo trọng lực
+        if (windsockCone) {
+            windsockCone.rotation.z = Math.sin(elapsed * 4.5) * 0.12 - (GAME.gravityG - 1.0) * 0.22;
+            windsockCone.rotation.y = Math.cos(elapsed * 3.1) * 0.15;
+        }
+
+        // Nội suy chu kỳ Ngày (0.0) -> Hoàng hôn (0.5) -> Đêm (1.0)
+        GAME.timeTransition = MathUtils.lerp(GAME.timeTransition, GAME.targetTimeTransition, Math.min(1, dt * 2.5));
+        const t = GAME.timeTransition;
+
+        // Góc cao của mặt trời
+        const sunElev = MathUtils.lerp(0.52, -0.18, t);
+        sunDir.set(0.62, sunElev, -0.65).normalize();
+        skyUniforms.uSunDir.value.copy(sunDir);
+        waterUniforms.uSunDir.value.copy(sunDir);
+
+        const cTopDay = new THREE.Color(0x0b3c7c);
+        const cTopSunset = new THREE.Color(0x1e1b4b);
+        const cTopNight = new THREE.Color(0x020617);
+
+        const cHorDay = new THREE.Color(0x93c5fd);
+        const cHorSunset = new THREE.Color(0xf97316);
+        const cHorNight = new THREE.Color(0x09152b);
+
+        const cSunDay = new THREE.Color(0xfffbeb);
+        const cSunSunset = new THREE.Color(0xfb7185);
+        const cSunNight = new THREE.Color(0x38bdf8);
+
+        if (t < 0.5) {
+            const k = t * 2.0;
+            skyUniforms.uTopColor.value.copy(cTopDay).lerp(cTopSunset, k);
+            skyUniforms.uHorizonColor.value.copy(cHorDay).lerp(cHorSunset, k);
+            skyUniforms.uSunColor.value.copy(cSunDay).lerp(cSunSunset, k);
+        } else {
+            const k = (t - 0.5) * 2.0;
+            skyUniforms.uTopColor.value.copy(cTopSunset).lerp(cTopNight, k);
+            skyUniforms.uHorizonColor.value.copy(cHorSunset).lerp(cHorNight, k);
+            skyUniforms.uSunColor.value.copy(cSunSunset).lerp(cSunNight, k);
+        }
+
+        const nightFactor = MathUtils.smoothstep(0.35, 0.9, t);
+        skyUniforms.uNightFactor.value = nightFactor;
+        scene.fog.color.copy(skyUniforms.uHorizonColor.value);
+        waterUniforms.uSkyHorizon.value.copy(skyUniforms.uHorizonColor.value);
+        waterUniforms.uSunColor.value.copy(skyUniforms.uSunColor.value);
+
+        sunLight.intensity = MathUtils.lerp(1.38, 0.14, nightFactor);
+        sunLight.color.copy(skyUniforms.uSunColor.value);
+        hemiLight.intensity = MathUtils.lerp(0.68, 0.22, nightFactor);
+
+        // Bật sáng cửa sổ thành phố, nhà ga, đèn pha máy bay và đèn xoay sân bay vào ban đêm
+        for (let item of dynamicLightMaterials) {
+            item.mat.emissiveIntensity = MathUtils.lerp(item.dayIntensity, item.nightIntensity, nightFactor);
+        }
+        if (beaconBeam) beaconBeam.material.opacity = MathUtils.lerp(0.06, 0.42, nightFactor);
+        if (airplane.landingLight) {
+            airplane.landingLight.intensity = (airplane.gearDown ? 1 : 0) * MathUtils.lerp(0.15, 2.2, nightFactor);
+        }
+        if (airplane.strobeLight) {
+            const flash = Math.sin(elapsed * 14.0) > 0.75 ? 1.8 : 0.0;
+            airplane.strobeLight.intensity = flash;
+        }
+
+        // Cập nhật hệ thống 4 đèn dẫn đường hạ cánh PAPI theo góc tiếp cận thực tế của người chơi
+        const rwyTouchdownX = CONFIG.runwayX - CONFIG.runwayLength / 2 + 230;
+        const distToTouchdown = Math.hypot(airplane.pos.x - rwyTouchdownX, airplane.pos.z - CONFIG.runwayZ);
+        const relAlt = Math.max(0, airplane.pos.y - CONFIG.baseTerrainY);
+        const glideSlopeDeg = THREE.MathUtils.radToDeg(Math.atan2(relAlt, Math.max(10, distToTouchdown)));
+
+        let whiteCount = 0;
+        for (let i = 0; i < papiLights.length; i++) {
+            const isWhite = glideSlopeDeg >= papiLights[i].thresholdDeg;
+            if (isWhite) whiteCount++;
+            papiLights[i].mat.color.setHex(isWhite ? 0xffffff : 0xff2222);
+        }
+        const papiIcons = '⚪'.repeat(whiteCount) + '🔴'.repeat(4 - whiteCount);
+        const papiStatus = whiteCount === 2 ? 'CHUẨN 3°' : (whiteCount > 2 ? 'CAO' : 'THẤP');
+        document.getElementById('hud-papi').textContent = `${papiIcons} ${papiStatus}`;
+
+        // Vẽ hiệu ứng Lens Flare Mặt Trời
+        renderSunLensFlare(nightFactor);
+    }
+
+    function renderSunLensFlare(nightFactor) {
+        if (lensCanvas.width !== window.innerWidth || lensCanvas.height !== window.innerHeight) {
+            lensCanvas.width = window.innerWidth;
+            lensCanvas.height = window.innerHeight;
+        }
+        lensCtx.clearRect(0, 0, lensCanvas.width, lensCanvas.height);
+        if (nightFactor > 0.72 || sunDir.y < 0.0) return;
+
+        const sunWorldPos = camera.position.clone().addScaledVector(sunDir, 5000);
+        const camForward = new THREE.Vector3();
+        camera.getWorldDirection(camForward);
+        const dotSun = camForward.dot(sunDir);
+        if (dotSun <= 0.15) return;
+
+        const projected = sunWorldPos.project(camera);
+        const sx = (projected.x * 0.5 + 0.5) * lensCanvas.width;
+        const sy = (-projected.y * 0.5 + 0.5) * lensCanvas.height;
+        const cx = lensCanvas.width * 0.5;
+        const cy = lensCanvas.height * 0.5;
+
+        const alpha = MathUtils.clamp((dotSun - 0.15) * 1.4, 0, 0.75) * (1.0 - nightFactor);
+        const dx = cx - sx;
+        const dy = cy - sy;
+
+        lensCtx.save();
+        lensCtx.globalCompositeOperation = 'lighter';
+
+        const flares = [
+            { t: 0.0, r: 95, col: `rgba(255, 245, 210, ${alpha * 0.45})` },
+            { t: 0.35, r: 28, col: `rgba(56, 189, 248, ${alpha * 0.25})` },
+            { t: 0.75, r: 46, col: `rgba(251, 191, 36, ${alpha * 0.22})` },
+            { t: 1.15, r: 20, col: `rgba(168, 85, 247, ${alpha * 0.25})` },
+            { t: 1.55, r: 64, col: `rgba(52, 211, 153, ${alpha * 0.18})` }
+        ];
+
+        for (let f of flares) {
+            const fx = sx + dx * f.t;
+            const fy = sy + dy * f.t;
+            const g = lensCtx.createRadialGradient(fx, fy, 1, fx, fy, f.r);
+            g.addColorStop(0, f.col);
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            lensCtx.fillStyle = g;
+            lensCtx.beginPath();
+            lensCtx.arc(fx, fy, f.r, 0, Math.PI * 2);
+            lensCtx.fill();
+        }
+        lensCtx.restore();
+    }
+
+    // ============================================================================
+    // 15. CẬP NHẬT GIAO DIỆN HUD: ĐƯỜNG CHÂN TRỜI NHÂN TẠO, LA BÀN & MINI-MAP
+    // ============================================================================
+    const horizonCanvas = document.getElementById('horizon-canvas');
+    const hCtx = horizonCanvas.getContext('2d');
+    const compassCanvas = document.getElementById('compass-canvas');
+    const cCtx = compassCanvas.getContext('2d');
+    const minimapCanvas = document.getElementById('minimap-canvas');
+    const mCtx = minimapCanvas.getContext('2d');
+
+    function updateHUD(dt) {
+        if (GAME.alertTimer > 0) {
+            GAME.alertTimer -= dt;
+            if (GAME.alertTimer <= 0) {
+                document.getElementById('hud-alert').style.opacity = '0';
+            }
+        }
+
+        const knots = Math.round(airplane.speedMs * 1.94384);
+        const kmh = Math.round(airplane.speedMs * 3.6);
+        const altM = Math.max(0, Math.round(airplane.pos.y - CONFIG.waterLevel));
+        const altFt = Math.round(altM * 3.28084);
+
+        document.getElementById('hud-speed').textContent = `${knots} KT (${kmh} km/h)`;
+        document.getElementById('hud-alt').textContent = `${altM} m (${altFt} ft)`;
+        document.getElementById('hud-vs').textContent = `${airplane.verticalSpeed >= 0 ? '+' : ''}${airplane.verticalSpeed.toFixed(1)} m/s`;
+        document.getElementById('hud-aoa').textContent = `${airplane.aoaDeg.toFixed(1)}°`;
+        document.getElementById('hud-gforce').textContent = `${airplane.gForce.toFixed(1)} G`;
+
+        // Cập nhật thanh Ga & Nhiên liệu
+        const thrPct = Math.round(airplane.throttle * 100);
+        document.getElementById('hud-thr-val').textContent = `${thrPct}%`;
+        document.getElementById('throttle-fill').style.height = `${thrPct}%`;
+
+        const fuelPct = Math.round(airplane.fuel);
+        document.getElementById('hud-fuel-val').textContent = `${fuelPct}%`;
+        document.getElementById('fuel-fill').style.height = `${fuelPct}%`;
+
+        // Cập nhật trạng thái cơ giới
+        const gearEl = document.getElementById('sys-gear');
+        gearEl.textContent = airplane.gearDown ? 'HẠ (DOWN)' : 'THU (UP)';
+        gearEl.className = airplane.gearDown ? 'on' : 'warn';
+
+        const flapsEl = document.getElementById('sys-flaps');
+        const flapDegs = [0, 15, 30][airplane.flapsLevel];
+        flapsEl.textContent = `${flapDegs}°`;
+        flapsEl.className = airplane.flapsLevel > 0 ? 'on' : 'off';
+
+        const brakeEl = document.getElementById('sys-brake');
+        brakeEl.textContent = airplane.braking ? 'ĐANG PHANH' : 'NHẢ';
+        brakeEl.className = airplane.braking ? 'warn' : 'off';
+
+        const abEl = document.getElementById('sys-ab');
+        abEl.textContent = airplane.throttle > 0.85 ? 'ĐỐT SAU (AB)' : 'BÌNH THƯỜNG';
+        abEl.className = airplane.throttle > 0.85 ? 'warn' : 'off';
+
+        const stateEl = document.getElementById('sys-flight-state');
+        if (airplane.isCrashed) {
+            stateEl.textContent = 'ĐÃ PHÁ HỦY - ĐANG HỒI SINH';
+            stateEl.className = 'warn';
+        } else if (airplane.isStalling) {
+            stateEl.textContent = '⚠️ THẤT TỐC (STALL)';
+            stateEl.className = 'warn';
+        } else if (airplane.onGround) {
+            stateEl.textContent = knots > 8 ? 'ĐANG LĂN BÁNH ĐƯỜNG BĂNG' : 'ĐỖ TRÊN MẶT ĐẤT';
+            stateEl.className = 'on';
+        } else {
+            stateEl.textContent = GAME.gravityG <= 0 ? 'BAY PHI TRỌNG LỰC' : 'ĐANG BAY ỔN ĐỊNH';
+            stateEl.className = 'on';
+        }
+
+        drawArtificialHorizon();
+        drawCompass();
+        drawMinimap();
+    }
+
+    function drawArtificialHorizon() {
+        const w = horizonCanvas.width, h = horizonCanvas.height;
+        const cx = w / 2, cy = h / 2;
+        hCtx.clearRect(0, 0, w, h);
+
+        hCtx.save();
+        hCtx.strokeStyle = 'rgba(0, 255, 170, 0.82)';
+        hCtx.fillStyle = 'rgba(0, 255, 170, 0.88)';
+        hCtx.lineWidth = 1.6;
+        hCtx.font = 'bold 11px Consolas, monospace';
+
+        // Tâm máy bay cố định (Aircraft Bore Sight Symbol)
+        hCtx.beginPath();
+        hCtx.moveTo(cx - 28, cy);
+        hCtx.lineTo(cx - 9, cy);
+        hCtx.lineTo(cx - 5, cy + 6);
+        hCtx.moveTo(cx + 28, cy);
+        hCtx.lineTo(cx + 9, cy);
+        hCtx.lineTo(cx + 5, cy + 6);
+        hCtx.stroke();
+        hCtx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+
+        // Thang góc chúc/ngóc (Pitch Ladder) xoay theo góc nghiêng cánh (Roll)
+        hCtx.save();
+        hCtx.translate(cx, cy);
+        hCtx.rotate(THREE.MathUtils.degToRad(-airplane.rollDeg));
+
+        const pxPerDeg = 3.6;
+        const pitchOffset = airplane.pitchDeg * pxPerDeg;
+
+        // Đường chân trời chính (0 độ)
+        hCtx.beginPath();
+        hCtx.moveTo(-95, pitchOffset);
+        hCtx.lineTo(-32, pitchOffset);
+        hCtx.moveTo(32, pitchOffset);
+        hCtx.lineTo(95, pitchOffset);
+        hCtx.stroke();
+
+        // Các vạch thang Pitch từ -30° đến +30°
+        for (let deg = -30; deg <= 30; deg += 10) {
+            if (deg === 0) continue;
+            const y = pitchOffset - deg * pxPerDeg;
+            if (Math.abs(y) > 105) continue;
+
+            hCtx.beginPath();
+            if (deg < 0) hCtx.setLineDash([5, 4]);
+            else hCtx.setLineDash([]);
+
+            hCtx.moveTo(-42, y);
+            hCtx.lineTo(-16, y);
+            hCtx.lineTo(-16, y + (deg > 0 ? 5 : -5));
+
+            hCtx.moveTo(42, y);
+            hCtx.lineTo(16, y);
+            hCtx.lineTo(16, y + (deg > 0 ? 5 : -5));
+            hCtx.stroke();
+
+            hCtx.setLineDash([]);
+            hCtx.fillText(`${deg}`, -64, y + 4);
+            hCtx.fillText(`${deg}`, 46, y + 4);
+        }
+        hCtx.restore();
+        hCtx.restore();
+    }
+
+    function drawCompass() {
+        const w = compassCanvas.width, h = compassCanvas.height;
+        cCtx.clearRect(0, 0, w, h);
+
+        const cx = w / 2;
+        const hdg = airplane.headingDeg;
+        const pxPerDeg = 3.2;
+
+        cCtx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+        cCtx.fillStyle = '#e2e8f0';
+        cCtx.font = 'bold 11px Consolas, monospace';
+        cCtx.textAlign = 'center';
+
+        const cardinals = { 0: 'BẮC (N)', 45: 'ĐB', 90: 'ĐÔNG (E)', 135: 'ĐN', 180: 'NAM (S)', 225: 'TN', 270: 'TÂY (W)', 315: 'TB' };
+
+        for (let offset = -50; offset <= 50; offset++) {
+            let deg = (Math.floor(hdg) + offset + 360) % 360;
+            const x = cx + (offset - (hdg - Math.floor(hdg))) * pxPerDeg;
+
+            if (deg % 5 === 0) {
+                const isMajor = deg % 15 === 0;
+                cCtx.beginPath();
+                cCtx.moveTo(x, h);
+                cCtx.lineTo(x, h - (isMajor ? 11 : 6));
+                cCtx.stroke();
+
+                if (cardinals[deg]) {
+                    cCtx.fillStyle = '#00ffaa';
+                    cCtx.fillText(cardinals[deg], x, 16);
+                } else if (deg % 30 === 0) {
+                    cCtx.fillStyle = '#94a3b8';
+                    cCtx.fillText(`${deg}°`, x, 16);
+                }
+            }
+        }
+
+        // Con trỏ hướng hiện tại ở chính giữa
+        cCtx.fillStyle = '#fbbf24';
+        cCtx.beginPath();
+        cCtx.moveTo(cx, h - 14);
+        cCtx.lineTo(cx - 5, h - 2);
+        cCtx.lineTo(cx + 5, h - 2);
+        cCtx.closePath();
+        cCtx.fill();
+    }
+
+    function drawMinimap() {
+        const w = minimapCanvas.width, h = minimapCanvas.height;
+        const cx = w / 2, cy = h / 2;
+        const scale = 0.032; // Tỉ lệ thu phóng bản đồ
+
+        mCtx.fillStyle = '#071526';
+        mCtx.fillRect(0, 0, w, h);
+
+        const toMap = (wx, wz) => ({
+            x: cx + (wx - airplane.pos.x) * scale,
+            y: cy + (wz - airplane.pos.z) * scale
+        });
+
+        // 1. Vẽ dòng sông trên mini-map
+        mCtx.strokeStyle = '#0284c7';
+        mCtx.lineWidth = 6;
+        mCtx.beginPath();
+        for (let wx = -3500; wx <= 3500; wx += 250) {
+            const p = toMap(wx, getRiverCenterZ(wx));
+            if (wx === -3500) mCtx.moveTo(p.x, p.y);
+            else mCtx.lineTo(p.x, p.y);
+        }
+        mCtx.stroke();
+
+        // 2. Vẽ khu vực Thành phố
+        const cityP = toMap(CONFIG.cityCenterX, CONFIG.cityCenterZ);
+        mCtx.fillStyle = 'rgba(148, 163, 184, 0.28)';
+        mCtx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+        mCtx.lineWidth = 1;
+        const citySize = 1050 * scale;
+        mCtx.fillRect(cityP.x - citySize / 2, cityP.y - citySize / 2, citySize, citySize);
+        mCtx.strokeRect(cityP.x - citySize / 2, cityP.y - citySize / 2, citySize, citySize);
+
+        // 3. Vẽ Đường băng sân bay (RWY 09/27) & Đường kéo dài hỗ trợ ngắm hạ cánh
+        const rwyStart = toMap(CONFIG.runwayX - CONFIG.runwayLength / 2, CONFIG.runwayZ);
+        const rwyEnd = toMap(CONFIG.runwayX + CONFIG.runwayLength / 2, CONFIG.runwayZ);
+
+        mCtx.strokeStyle = 'rgba(0, 255, 170, 0.35)';
+        mCtx.setLineDash([3, 3]);
+        mCtx.beginPath();
+        const extStart = toMap(CONFIG.runwayX - 2400, CONFIG.runwayZ);
+        const extEnd = toMap(CONFIG.runwayX + 2400, CONFIG.runwayZ);
+        mCtx.moveTo(extStart.x, extStart.y);
+        mCtx.lineTo(extEnd.x, extEnd.y);
+        mCtx.stroke();
+        mCtx.setLineDash([]);
+
+        mCtx.strokeStyle = '#f8fafc';
+        mCtx.lineWidth = 4;
+        mCtx.beginPath();
+        mCtx.moveTo(rwyStart.x, rwyStart.y);
+        mCtx.lineTo(rwyEnd.x, rwyEnd.y);
+        mCtx.stroke();
+
+        // 4. Vẽ biểu tượng máy bay của người chơi ở tâm Mini-map
+        mCtx.save();
+        mCtx.translate(cx, cy);
+        mCtx.rotate(THREE.MathUtils.degToRad(airplane.headingDeg));
+        mCtx.fillStyle = '#00ffaa';
+        mCtx.beginPath();
+        mCtx.moveTo(0, -8);
+        mCtx.lineTo(6, 6);
+        mCtx.lineTo(0, 3);
+        mCtx.lineTo(-6, 6);
+        mCtx.closePath();
+        mCtx.fill();
+        mCtx.restore();
+
+        document.getElementById('minimap-coords').textContent =
+            `X:${Math.round(airplane.pos.x)} Z:${Math.round(airplane.pos.z)}`;
+    }
+
+    // ============================================================================
+    // 16. QUẢN LÝ CHẤT LƯỢNG ĐỒ HỌA, SỰ KIỆN NÚT BẤM & VÒNG LẶP CHÍNH
+    // ============================================================================
+    function applyQualityPreset(quality) {
+        GAME.quality = quality;
+        const qLabels = { low: 'Thấp', medium: 'Trung bình', high: 'Cao' };
+        document.getElementById('btn-quality').textContent = `✨ Đồ họa: ${qLabels[quality]}`;
+
+        document.querySelectorAll('.quality-opt').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-q') === quality);
+        });
+
+        if (quality === 'low') {
+            renderer.setPixelRatio(1.0);
+            renderer.shadowMap.enabled = false;
+            if (grassInst) grassInst.visible = false;
+            if (treeCrownInst) treeCrownInst.count = 900;
+            if (treeTrunkInst) treeTrunkInst.count = 900;
+        } else if (quality === 'medium') {
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.4));
+            renderer.shadowMap.enabled = true;
+            if (grassInst) grassInst.visible = true;
+            if (treeCrownInst) treeCrownInst.count = 1600;
+            if (treeTrunkInst) treeTrunkInst.count = 1600;
+        } else {
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
+            renderer.shadowMap.enabled = true;
+            if (grassInst) grassInst.visible = true;
+            if (treeCrownInst) treeCrownInst.count = 2600;
+            if (treeTrunkInst) treeTrunkInst.count = 2600;
+        }
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function setTimeMode(mode) {
+        GAME.timeMode = mode;
+        const mapT = { day: 0.0, sunset: 0.5, night: 1.0 };
+        const labels = {
+            day: '☀️ Ban ngày (14:00)',
+            sunset: '🌇 Hoàng hôn (18:15)',
+            night: '🌃 Ban đêm (23:00)'
+        };
+        GAME.targetTimeTransition = mapT[mode];
+        document.getElementById('hud-time-label').textContent = labels[mode];
+
+        document.querySelectorAll('.time-opt').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-t') === mode);
+        });
+    }
+
+    function cycleTimeOfDay() {
+        const order = ['day', 'sunset', 'night'];
+        const next = order[(order.indexOf(GAME.timeMode) + 1) % order.length];
+        setTimeMode(next);
+    }
+
+    function cycleCameraMode() {
+        GAME.cameraMode = (GAME.cameraMode + 1) % 3;
+        const names = ['Sau lưng', 'Buồng lái', 'Ngoài (Kéo chuột)'];
+        document.getElementById('hud-cam-mode').textContent = `🎥 Camera: ${names[GAME.cameraMode]}`;
+    }
+
+    function toggleMouseSteer() {
+        GAME.mouseSteer = !GAME.mouseSteer;
+        const btn = document.getElementById('btn-mouse-steer');
+        btn.classList.toggle('active', GAME.mouseSteer);
+        btn.textContent = GAME.mouseSteer ? '🖱️ Lái chuột: BẬT' : '🖱️ Lái chuột (M)';
+        showHudAlert(GAME.mouseSteer ? 'ĐÃ BẬT LÁI MÁY BAY BẰNG CHUỘT' : 'ĐÃ TẮT LÁI BẰNG CHUỘT', 'info', 1.4);
+    }
+
+    function togglePauseMenu(forceState) {
+        GAME.paused = typeof forceState === 'boolean' ? forceState : !GAME.paused;
+        document.getElementById('modal-overlay').style.display = GAME.paused ? 'flex' : 'none';
+        if (!GAME.paused) {
+            sound.init();
+            GAME.clock.getDelta();
+        }
+    }
+
+    function setupUIEvents() {
+        document.getElementById('btn-start-game').addEventListener('click', () => {
+            togglePauseMenu(false);
+        });
+
+        document.getElementById('btn-spawn-air').addEventListener('click', () => {
+            respawnPlane(true);
+            togglePauseMenu(false);
+        });
+
+        document.getElementById('btn-pause').addEventListener('click', () => togglePauseMenu());
+        document.getElementById('btn-time').addEventListener('click', () => cycleTimeOfDay());
+        document.getElementById('btn-camera').addEventListener('click', () => cycleCameraMode());
+        document.getElementById('btn-mouse-steer').addEventListener('click', () => toggleMouseSteer());
+        document.getElementById('btn-respawn').addEventListener('click', () => respawnPlane(false));
+
+        document.getElementById('btn-quality').addEventListener('click', () => {
+            const order = ['low', 'medium', 'high'];
+            const next = order[(order.indexOf(GAME.quality) + 1) % order.length];
+            applyQualityPreset(next);
+        });
+
+        document.getElementById('btn-audio').addEventListener('click', (e) => {
+            sound.init();
+            sound.enabled = !sound.enabled;
+            e.target.textContent = sound.enabled ? '🔊 Âm thanh: Bật' : '🔇 Âm thanh: Tắt';
+        });
+
+        document.querySelectorAll('.quality-opt').forEach(btn => {
+            btn.addEventListener('click', () => applyQualityPreset(btn.getAttribute('data-q')));
+        });
+
+        document.querySelectorAll('.time-opt').forEach(btn => {
+            btn.addEventListener('click', () => setTimeMode(btn.getAttribute('data-t')));
+        });
+
+        document.getElementById('modal-touch-toggle').addEventListener('click', (e) => {
+            const tc = document.getElementById('touch-controls');
+            tc.classList.toggle('enabled');
+            e.target.textContent = tc.classList.contains('enabled')
+                ? '📱 Joystick Cảm ứng: BẬT'
+                : '📱 Joystick Cảm ứng: Tự động';
+        });
+
+        // Thanh trượt & Các nút chọn nhanh Trọng lực
+        const gravSlider = document.getElementById('gravity-slider');
+        gravSlider.addEventListener('input', (e) => {
+            setGravityTarget(e.target.value);
+        });
+
+        document.querySelectorAll('.grav-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                setGravityTarget(btn.getAttribute('data-g'));
+            });
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    }
+
+    // ============================================================================
+    // 17. KHỞI CHẠY TOÀN BỘ THẾ GIỚI & VÒNG LẶP RENDER 60 FPS
+    // ============================================================================
+    let elapsedTotal = 0;
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const rawDt = GAME.clock.getDelta();
+        const dt = Math.min(rawDt, 0.05);
+
+        // Đo FPS và tự động tối ưu PixelRatio nếu máy yếu
+        GAME.frameCount++;
+        GAME.fpsTimer += rawDt;
+        if (GAME.fpsTimer >= 0.5) {
+            GAME.fps = Math.round(GAME.frameCount / GAME.fpsTimer);
+            document.getElementById('hud-fps').textContent = `${GAME.fps} FPS`;
+            if (GAME.fps < 32 && renderer.getPixelRatio() > 1.0) {
+                renderer.setPixelRatio(1.0);
+            }
+            GAME.frameCount = 0;
+            GAME.fpsTimer = 0;
+        }
+
+        if (!GAME.paused) {
+            elapsedTotal += dt;
+            updateFlightPhysics(dt);
+            updateTraffic(dt);
+            updateParticles(dt);
+        }
+
+        updateEnvironmentAndLights(dt, elapsedTotal);
+        updateCamera(dt);
+        updateHUD(dt);
+        sound.update(airplane.throttle, airplane.speedMs, airplane.isStalling, airplane.isCrashed, GAME.paused);
+
+        renderer.render(scene, camera);
+    }
+
+    // Khởi tạo toàn bộ thế giới 3D
+    buildTerrain();
+    buildVegetationAndClouds();
+    buildAirport();
+    buildCityAndSuburbs();
+    buildAirplaneModel();
+    initParticleSystem();
+    setupControls();
+    setupUIEvents();
+    respawnPlane(false);
+    animate();
+    </script>
+</body>
+</html>
